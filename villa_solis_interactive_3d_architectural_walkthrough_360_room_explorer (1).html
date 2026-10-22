@@ -1,0 +1,2577 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Villa Solis — Interactive 3D Architectural Walkthrough & 360° Room Explorer</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-serif: 'Cormorant Garamond', Georgia, serif;
+    }
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0c0d10;
+      color: #f5f3ef;
+      font-family: var(--font-sans);
+      overscroll-behavior: none;
+    }
+    .font-serif-arch {
+      font-family: var(--font-serif);
+    }
+    #webgl-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      cursor: grab;
+      touch-action: none;
+    }
+    #webgl-container.dragging {
+      cursor: grabbing;
+    }
+    /* Glassmorphism panels */
+    .arch-glass {
+      background: rgba(15, 17, 22, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .arch-glass-subtle {
+      background: rgba(18, 20, 26, 0.58);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    /* Custom scrollbars for inner panels */
+    .custom-scroll::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: rgba(217, 179, 130, 0.35);
+      border-radius: 9999px;
+    }
+    /* 3D Hotspot Markers */
+    .hotspot-marker {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 15;
+    }
+    .hotspot-marker.hidden-behind {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transform: translate(-50%, -50%) scale(0.5);
+    }
+    @keyframes pulseRing {
+      0% { transform: scale(0.95); opacity: 0.75; }
+      70% { transform: scale(1.75); opacity: 0; }
+      100% { transform: scale(1.75); opacity: 0; }
+    }
+    .hotspot-pulse::before {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 9999px;
+      border: 1.5px solid #e2b887;
+      animation: pulseRing 2.2s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+      pointer-events: none;
+    }
+    /* Smooth range slider */
+    input[type="range"].arch-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.14);
+      height: 4px;
+      border-radius: 999px;
+      outline: none;
+    }
+    input[type="range"].arch-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e2b887;
+      cursor: pointer;
+      border: 2px solid #111318;
+      box-shadow: 0 0 8px rgba(226, 184, 135, 0.6);
+    }
+  </style>
+</head>
+<body class="relative w-full h-full overflow-hidden select-none">
+
+  <!-- 3D WebGL Viewport -->
+  <div id="webgl-container" aria-label="360 degree interactive 3D house viewport"></div>
+
+  <!-- 3D Spatial Hotspots Layer -->
+  <div id="hotspots-layer" class="fixed inset-0 pointer-events-none z-10 overflow-hidden"></div>
+
+    <!-- First-Person Game Mode Crosshair & Center Reticle -->
+  <div id="game-reticle" class="fixed inset-0 pointer-events-none z-20 hidden items-center justify-center">
+    <div class="relative flex items-center justify-center">
+      <div id="reticle-dot" class="w-2 h-2 rounded-full bg-white/70 shadow-[0_0_8px_rgba(255,255,255,0.9)] transition-all duration-200"></div>
+      <div id="reticle-ring" class="absolute w-7 h-7 rounded-full border border-white/30 transition-all duration-200 scale-75 opacity-40"></div>
+      
+      <!-- Interactive Element Prompt [E] -->
+      <div id="interact-prompt" class="absolute top-7 whitespace-nowrap arch-glass px-3 py-1 rounded-full text-xs font-medium text-amber-200 border border-amber-300/40 hidden items-center gap-1.5 shadow-xl animate-bounce">
+        <span class="px-1.5 py-0.5 bg-amber-300 text-stone-950 font-mono font-bold rounded text-[10px]">E</span>
+        <span id="interact-text">Inspect Feature</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pointer Lock Click-To-Aim Prompt Banner (Shows in Explore Mode when cursor is free) -->
+  <div id="pointer-lock-banner" class="fixed top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-auto hidden">
+    <button id="btn-lock-pointer" type="button" class="arch-glass px-4 py-1.5 rounded-full text-xs text-amber-200 hover:bg-amber-300/20 border border-amber-300/40 shadow-xl transition flex items-center gap-2">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+      </svg>
+      <span>Click here or on scene to <strong>Lock Mouse Aim</strong> · Press <strong>ESC</strong> to release</span>
+    </button>
+  </div>
+
+  <!-- On-Screen Virtual D-Pad for Mobile / Touch Navigation in Explore Mode -->
+  <div id="touch-controls-hud" class="fixed left-3 bottom-24 z-20 pointer-events-auto hidden flex-col items-center gap-1.5 arch-glass p-2.5 rounded-2xl border border-white/10 sm:hidden">
+    <div class="text-[9px] uppercase font-mono text-stone-400">Walk Controls</div>
+    <div class="flex flex-col items-center gap-1">
+      <button id="btn-touch-fwd" type="button" class="w-10 h-10 rounded-xl bg-white/10 active:bg-amber-300 active:text-stone-950 text-stone-200 flex items-center justify-center font-bold font-mono">W</button>
+      <div class="flex items-center gap-1">
+        <button id="btn-touch-left" type="button" class="w-10 h-10 rounded-xl bg-white/10 active:bg-amber-300 active:text-stone-950 text-stone-200 flex items-center justify-center font-bold font-mono">A</button>
+        <button id="btn-touch-back" type="button" class="w-10 h-10 rounded-xl bg-white/10 active:bg-amber-300 active:text-stone-950 text-stone-200 flex items-center justify-center font-bold font-mono">S</button>
+        <button id="btn-touch-right" type="button" class="w-10 h-10 rounded-xl bg-white/10 active:bg-amber-300 active:text-stone-950 text-stone-200 flex items-center justify-center font-bold font-mono">D</button>
+      </div>
+      <div class="flex items-center gap-1 w-full mt-1">
+        <button id="btn-touch-sprint" type="button" class="flex-1 py-1 rounded-lg bg-white/10 active:bg-amber-300 active:text-stone-950 text-[10px] font-semibold text-stone-300">Run</button>
+        <button id="btn-touch-jump" type="button" class="flex-1 py-1 rounded-lg bg-white/10 active:bg-amber-300 active:text-stone-950 text-[10px] font-semibold text-stone-300">Jump</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Navigation & Status HUD -->
+  <header class="fixed top-0 left-0 right-0 z-30 pointer-events-none px-3 sm:px-6 pt-3 sm:pt-4 flex flex-wrap items-center justify-between gap-2">
+    <!-- Brand & Current Room Pill -->
+    <div class="pointer-events-auto flex items-center gap-2.5 arch-glass px-3.5 py-2 rounded-full shadow-lg">
+      <div class="w-2.5 h-2.5 rounded-full bg-amber-300 shadow-[0_0_10px_#fcd34d]"></div>
+      <div class="flex items-baseline gap-2">
+        <span class="font-serif-arch text-lg sm:text-xl font-semibold tracking-wide text-amber-100">VILLA SOLIS</span>
+        <span class="hidden xl:inline-block text-[11px] uppercase tracking-[0.2em] text-stone-400">3D Residence</span>
+      </div>
+      <div class="h-3.5 w-[1px] bg-white/15 mx-1"></div>
+      <span id="hud-room-badge" class="text-xs font-medium text-amber-200/90 tracking-wide">01 / Entrance Foyer</span>
+    </div>
+
+    <!-- Mode Selector: Cinematic Tour vs Game Explore Mode -->
+    <div class="pointer-events-auto arch-glass p-1 rounded-full flex items-center gap-1 shadow-lg border border-white/15">
+      <button id="btn-mode-tour" type="button" class="px-3 py-1 rounded-full text-xs font-semibold transition bg-amber-300 text-stone-950 flex items-center gap-1.5 shadow-sm" title="Guided Cinematic Spline Walkthrough & Scroll-Jacking">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>
+        <span>Tour Mode</span>
+      </button>
+      <button id="btn-mode-explore" type="button" class="px-3 py-1 rounded-full text-xs font-medium transition text-stone-300 hover:text-white flex items-center gap-1.5" title="First-Person Game Explorer (WASD Movement + Mouse Look)">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+        </svg>
+        <span>Game Explorer (WASD)</span>
+      </button>
+    </div>
+
+    <!-- Center 360° Compass & Drag Scrubber Pill -->
+    <div class="pointer-events-auto arch-glass px-3.5 py-1.5 rounded-full flex items-center gap-3">
+      <div class="flex items-center gap-1.5 text-xs text-stone-300" title="Drag anywhere on the screen to scrub 360° perspective">
+        <svg class="w-4 h-4 text-amber-300 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+        </svg>
+        <span class="hidden sm:inline text-[11px] uppercase tracking-wider text-stone-400">360° View:</span>
+        <span id="compass-readout" class="font-mono text-xs font-semibold text-amber-200 w-16 text-center">000° N</span>
+      </div>
+
+      <button id="btn-reset-angle" type="button" class="text-[11px] px-2.5 py-1 rounded-full bg-white/10 hover:bg-amber-300/20 text-stone-200 hover:text-amber-200 transition flex items-center gap-1" title="Reset perspective angle to default room framing">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        <span>Center View</span>
+      </button>
+
+      <button id="btn-auto-orbit" type="button" class="text-[11px] px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-stone-300 transition flex items-center gap-1" title="Toggle gentle 360° panoramic rotation">
+        <span id="orbit-dot" class="w-1.5 h-1.5 rounded-full bg-stone-500"></span>
+        <span>360° Pan</span>
+      </button>
+    </div>
+
+    <!-- Right Controls: Lighting, Performance, Floorplan & Help -->
+    <div class="pointer-events-auto flex items-center gap-2">
+      <!-- Flashlight Torch Toggle (F) -->
+      <button id="btn-flashlight" type="button" class="arch-glass px-2.5 py-1.5 rounded-full text-[11px] text-stone-300 hover:text-amber-200 hover:bg-white/10 transition flex items-center gap-1.5" title="Toggle Architectural Torch / Headlamp (Key F)">
+        <svg class="w-3.5 h-3.5 text-amber-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+        </svg>
+        <span id="label-flashlight" class="hidden sm:inline">Torch [F]</span>
+      </button>
+
+      <!-- Sound Mute Toggle -->
+      <button id="btn-sound-toggle" type="button" class="arch-glass w-8 h-8 rounded-full flex items-center justify-center text-stone-300 hover:text-amber-200 hover:bg-white/10 transition" title="Toggle Footstep & Interaction Sounds">
+        <svg id="icon-sound-on" class="w-3.5 h-3.5 hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        </svg>
+        <svg id="icon-sound-off" class="w-3.5 h-3.5 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+      </button>
+
+      <!-- Lighting Time-of-Day Switcher -->
+      <div class="arch-glass p-1 rounded-full flex items-center gap-0.5">
+        <button type="button" data-lighting="day" class="lighting-btn px-2.5 py-1 rounded-full text-[11px] font-medium transition bg-amber-300/20 text-amber-200">Daylight</button>
+        <button type="button" data-lighting="sunset" class="lighting-btn px-2.5 py-1 rounded-full text-[11px] font-medium transition text-stone-400 hover:text-stone-200">Golden Hour</button>
+        <button type="button" data-lighting="night" class="lighting-btn px-2.5 py-1 rounded-full text-[11px] font-medium transition text-stone-400 hover:text-stone-200">Night</button>
+      </div>
+
+      <!-- Quality / FPS Indicator -->
+      <button id="btn-perf-mode" type="button" class="arch-glass px-3 py-1.5 rounded-full text-[11px] font-mono text-emerald-300 hover:bg-white/10 transition flex items-center gap-1.5" title="Click to toggle Eco / High-DPI rendering mode">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span id="fps-counter">60 FPS</span>
+        <span id="perf-label" class="hidden lg:inline text-stone-400">· Balanced</span>
+      </button>
+
+      <!-- Guide Modal Trigger -->
+      <button id="btn-open-guide" type="button" class="arch-glass w-8 h-8 rounded-full flex items-center justify-center text-stone-300 hover:text-amber-200 hover:bg-white/10 transition" title="Walkthrough Controls & Guide">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Left Architectural Room Details Panel -->
+  <aside id="room-details-panel" class="fixed left-3 sm:left-6 bottom-20 sm:bottom-24 z-20 w-[calc(100vw-1.5rem)] sm:w-[370px] max-h-[62vh] flex flex-col arch-glass rounded-2xl overflow-hidden transition-all duration-300">
+    <!-- Panel Header with Collapse Toggle -->
+    <div class="px-4 pt-4 pb-2.5 border-b border-white/10 flex items-start justify-between gap-2">
+      <div>
+        <div class="flex items-center gap-2">
+          <span id="room-index-tag" class="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-amber-300/15 text-amber-200 border border-amber-300/25">STOP 01 / 07</span>
+          <span id="room-zone-tag" class="text-[11px] text-stone-400 uppercase tracking-wider">Ground Level</span>
+        </div>
+        <h1 id="room-title" class="font-serif-arch text-2xl sm:text-3xl font-semibold text-white mt-1 leading-tight">Grand Entrance Foyer</h1>
+      </div>
+      <button id="btn-toggle-details" type="button" class="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-stone-300 transition shrink-0" title="Minimize or Expand Room Details">
+        <svg id="icon-collapse-details" class="w-4 h-4 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Collapsible Body -->
+    <div id="room-details-body" class="px-4 py-3 overflow-y-auto custom-scroll space-y-3.5 text-xs">
+      <p id="room-description" class="text-stone-300 leading-relaxed text-[12.5px]">
+        Double-height entry sequence framed in warm slatted white oak and honed travertine stone, offering an immediate axial sightline straight through to the courtyard infinity pool.
+      </p>
+
+      <!-- Architectural Telemetry Grid -->
+      <div class="grid grid-cols-2 gap-2">
+        <div class="bg-white/[0.04] border border-white/[0.07] rounded-xl p-2.5">
+          <div class="text-[10px] uppercase tracking-wider text-stone-400">Floor Area & Clear Height</div>
+          <div id="room-stat-area" class="text-sm font-semibold text-amber-100 mt-0.5">24 m² · 3.8m Ceiling</div>
+        </div>
+        <div class="bg-white/[0.04] border border-white/[0.07] rounded-xl p-2.5">
+          <div class="text-[10px] uppercase tracking-wider text-stone-400">Primary Materiality</div>
+          <div id="room-stat-material" class="text-sm font-semibold text-amber-100 mt-0.5">Travertine & White Oak</div>
+        </div>
+        <div class="bg-white/[0.04] border border-white/[0.07] rounded-xl p-2.5">
+          <div class="text-[10px] uppercase tracking-wider text-stone-400">Daylight & Aspect</div>
+          <div id="room-stat-aspect" class="text-xs font-medium text-stone-200 mt-0.5">South Axial Glazing</div>
+        </div>
+        <div class="bg-white/[0.04] border border-white/[0.07] rounded-xl p-2.5">
+          <div class="text-[10px] uppercase tracking-wider text-stone-400">Ambient Environment</div>
+          <div id="room-stat-climate" class="text-xs font-medium text-stone-200 mt-0.5">21.5°C · 2700K Cove LED</div>
+        </div>
+      </div>
+
+      <!-- Interactive Look-At Feature Pills -->
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-[10px] uppercase tracking-[0.15em] text-stone-400 font-semibold">Inspect Room Features (Click to Aim 360°)</span>
+        </div>
+        <div id="room-features-list" class="flex flex-wrap gap-1.5"></div>
+      </div>
+
+      <!-- 360° Scrubber & Lens Controls inside card -->
+      <div class="pt-2 border-t border-white/10 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <label for="slider-yaw" class="text-[11px] text-stone-300 flex items-center gap-1.5">
+            <span>360° Scrub Angle</span>
+            <span id="label-yaw-deg" class="font-mono text-amber-200">0°</span>
+          </label>
+          <input id="slider-yaw" type="range" min="-180" max="180" step="1" value="0" class="arch-slider w-36" />
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <label for="slider-fov" class="text-[11px] text-stone-300 flex items-center gap-1.5">
+            <span>Camera Lens (FOV)</span>
+            <span id="label-fov-mm" class="font-mono text-amber-200">62° Wide</span>
+          </label>
+          <input id="slider-fov" type="range" min="40" max="85" step="1" value="62" class="arch-slider w-36" />
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Interactive Mini-Map (Floorplan Radar) & Selected Hotspot Drawer -->
+  <div class="fixed right-3 sm:right-6 bottom-20 sm:bottom-24 z-20 flex flex-col items-end gap-2.5 pointer-events-none">
+    <!-- Selected Hotspot Inspection Popup -->
+    <div id="hotspot-detail-card" class="pointer-events-auto hidden w-72 sm:w-80 arch-glass rounded-2xl p-3.5 border border-amber-300/30 transition-all">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <span id="hotspot-tag" class="text-[10px] font-mono uppercase tracking-widest text-amber-300">Architectural Element</span>
+          <h3 id="hotspot-title" class="text-base font-semibold text-white mt-0.5">Sculptural Entry Console</h3>
+        </div>
+        <button id="btn-close-hotspot" type="button" class="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <p id="hotspot-desc" class="text-xs text-stone-300 mt-1.5 leading-relaxed"></p>
+      <div class="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-amber-200/90 font-mono">
+        <span id="hotspot-spec">Finish: Brushed Bronze</span>
+        <span id="hotspot-dim">Dims: 180 × 45 cm</span>
+      </div>
+    </div>
+
+    <!-- Interactive Floorplan Radar Card -->
+    <div class="pointer-events-auto arch-glass rounded-2xl p-3 w-56 sm:w-64">
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-300">Interactive Floorplan</span>
+        <button id="btn-toggle-minimap" type="button" class="text-[10px] text-amber-200 hover:underline">Hide</button>
+      </div>
+      <div id="minimap-body">
+        <svg id="floorplan-svg" viewBox="-16 -16 32 30" class="w-full h-36 bg-black/40 rounded-xl border border-white/10 cursor-pointer">
+          <!-- Courtyard & Pool Zone -->
+          <rect x="-5.5" y="-3.5" width="11" height="9.5" rx="0.5" fill="rgba(20, 83, 110, 0.28)" stroke="rgba(56, 189, 248, 0.35)" stroke-width="0.2" />
+          <!-- Architectural Room Footprints -->
+          <!-- 01 Foyer -->
+          <rect class="fp-room" data-room="0" x="-3.5" y="6" width="7" height="5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+          <!-- 02 Living Pavilion -->
+          <rect class="fp-room" data-room="1" x="-13.5" y="-2" width="8" height="11" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+          <!-- 03 Kitchen & Dining -->
+          <rect class="fp-room" data-room="2" x="-13.5" y="-12" width="11" height="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+          <!-- 04 Glass Atrium & Study -->
+          <rect class="fp-room" data-room="3" x="-2.5" y="-12" width="7" height="8.5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+          <!-- 05 Primary Bedroom Suite -->
+          <rect class="fp-room" data-room="4" x="4.5" y="-12" width="9" height="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+          <!-- 06 Spa Wet-Room -->
+          <rect class="fp-room" data-room="5" x="5.5" y="-2" width="8" height="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.28)" stroke-width="0.25" />
+
+          <!-- Walkthrough Spline Path -->
+          <path id="fp-spline-path" d="" fill="none" stroke="rgba(226, 184, 135, 0.45)" stroke-width="0.3" stroke-dasharray="0.6 0.5" />
+
+          <!-- Room Waypoint Dots -->
+          <g id="fp-waypoints"></g>
+
+          <!-- Live Camera Position & 360° View Cone -->
+          <g id="fp-camera-rig" transform="translate(0, 8.5)">
+            <polygon id="fp-fov-cone" points="0,0 -3.2,-5.5 3.2,-5.5" fill="rgba(252, 211, 77, 0.26)" stroke="rgba(252, 211, 77, 0.6)" stroke-width="0.18" />
+            <circle r="0.85" fill="#fcd34d" stroke="#111" stroke-width="0.3" />
+          </g>
+        </svg>
+        <div class="mt-1.5 flex items-center justify-between text-[10px] text-stone-400">
+          <span>Click any zone to jump</span>
+          <span id="scroll-pct-readout" class="font-mono text-amber-200">0% Walked</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Scroll-Jacking Walkthrough Timeline Bar -->
+  <footer class="fixed bottom-0 left-0 right-0 z-30 px-3 sm:px-6 pb-3 pt-2 pointer-events-none">
+    <div class="max-w-5xl mx-auto pointer-events-auto arch-glass rounded-2xl px-3 sm:px-5 py-2.5 flex flex-col gap-2">
+      <!-- Game Explore Mode Key Guide Bar (Visible when in Explore Mode) -->
+      <div id="game-controls-bar" class="hidden items-center justify-between gap-2 text-xs text-stone-300 border-b border-white/10 pb-2">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px]">
+          <span class="flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">W</kbd>
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">S</kbd>
+            <span>Forward / Backward</span>
+          </span>
+          <span class="flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">A</kbd>
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">D</kbd>
+            <span>Strafe</span>
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="text-amber-200">Mouse</span>
+            <span>Look Direction</span>
+          </span>
+          <span class="hidden md:inline-flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">Shift</kbd>
+            <span>Sprint</span>
+          </span>
+          <span class="hidden md:inline-flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">Space</kbd>
+            <span>Jump</span>
+          </span>
+          <span class="hidden lg:inline-flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">F</kbd>
+            <span>Torch</span>
+          </span>
+          <span class="hidden lg:inline-flex items-center gap-1">
+            <kbd class="px-1.5 py-0.5 rounded bg-white/10 border border-white/20 font-mono text-[10px] text-amber-200">E</kbd>
+            <span>Inspect</span>
+          </span>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="player-speed-badge" class="font-mono text-[11px] text-emerald-300">Walk · 3.2 m/s</span>
+          <button id="btn-return-tour" type="button" class="px-2.5 py-1 rounded-lg bg-amber-300/20 hover:bg-amber-300/30 text-amber-200 text-xs font-medium transition">Return to Tour</button>
+        </div>
+      </div>
+
+      <!-- Scrubber Progress Track (Tour Mode) -->
+      <div id="tour-scrubber-track" class="flex items-center gap-3">
+        <button id="btn-prev-room" type="button" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-xs text-stone-200 transition flex items-center gap-1 shrink-0" title="Previous Room (Up Arrow)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          <span class="hidden sm:inline">Prev</span>
+        </button>
+
+        <!-- Interactive Walkthrough Scrubber -->
+        <div class="relative flex-1 flex items-center">
+          <input id="walkthrough-scrubber" type="range" min="0" max="1000" value="0" class="arch-slider w-full cursor-pointer" aria-label="Walkthrough scroll progress" />
+        </div>
+
+        <button id="btn-next-room" type="button" class="px-2.5 py-1 rounded-lg bg-amber-300/20 hover:bg-amber-300/30 border border-amber-300/30 text-xs text-amber-100 transition flex items-center gap-1 shrink-0" title="Next Room (Down Arrow or Scroll)">
+          <span class="hidden sm:inline">Next</span>
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        <button id="btn-auto-walk" type="button" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-xs text-stone-300 transition flex items-center gap-1.5 shrink-0" title="Auto-play guided house tour">
+          <span id="auto-walk-indicator" class="w-2 h-2 rounded-full bg-stone-500"></span>
+          <span id="auto-walk-text">Auto Tour</span>
+        </button>
+      </div>
+
+      <!-- Room Stops Bar -->
+      <div id="room-tabs-bar" class="flex items-center justify-between gap-1 overflow-x-auto custom-scroll pb-0.5"></div>
+    </div>
+  </footer>
+
+  <!-- Subtle Floating Drag / Scroll Prompt Pill (Auto-fades after interaction) -->
+  <div id="interaction-hint" class="fixed top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-opacity duration-500">
+    <div class="arch-glass-subtle px-4 py-1.5 rounded-full text-[11px] text-stone-200 flex items-center gap-3 shadow-lg">
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
+        <strong>Scroll Wheel</strong> to walk through rooms
+      </span>
+      <span class="text-white/25">|</span>
+      <span><strong>Click + Drag</strong> to scrub 360° perspective</span>
+    </div>
+  </div>
+
+  <!-- Walkthrough Controls & Architectural Info Modal -->
+  <div id="guide-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-md p-4">
+    <div class="arch-glass max-w-lg w-full rounded-3xl p-6 border border-white/15 space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div>
+          <span class="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-300">Interactive Controls</span>
+          <h2 class="font-serif-arch text-2xl font-semibold text-white">Villa Solis 3D Walkthrough Guide</h2>
+        </div>
+        <button id="btn-close-guide" type="button" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-stone-200">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="space-y-3 text-xs text-stone-300 leading-relaxed">
+        <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+          <div class="font-semibold text-amber-200 mb-0.5 flex items-center gap-1.5">
+            <span class="px-1.5 py-0.2 bg-amber-300 text-stone-950 font-bold rounded text-[10px]">NEW</span>
+            <span>Game Explorer Mode (WASD & Mouse Look)</span>
+          </div>
+          <p>Switch to <strong>Game Explorer</strong> mode in the header to freely explore the villa like a video game. Use <strong>W/S</strong> to move forward and backward, <strong>A/D</strong> to strafe, and move your <strong>Mouse</strong> to control your look direction. Press <strong>Shift</strong> to sprint, <strong>Space</strong> to jump, <strong>C</strong> to crouch, and <strong>F</strong> to turn on the architectural torch.</p>
+        </div>
+        <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+          <div class="font-semibold text-amber-200 mb-0.5">Cinematic Tour Mode & Scroll-Jacking</div>
+          <p>In <strong>Tour Mode</strong>, use your <strong>Mouse Wheel / Trackpad Scroll</strong> or the <strong>Bottom Timeline Scrubber</strong> to glide smoothly along the architectural spline through all 7 rooms, and <strong>Click + Drag</strong> anywhere to scrub 360° perspective.</p>
+        </div>
+        <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+          <div class="font-semibold text-amber-200 mb-0.5">Interactive Hotspots & Collision Physics</div>
+          <p>Walk up to any architectural element in Explorer Mode and press <strong>[E]</strong> (or click it) to inspect its material specification. Solid walls, furniture, and pool edges feature authentic collision boundaries with smooth sliding.</p>
+        </div>
+      </div>
+      <div class="pt-2 flex justify-end">
+        <button id="btn-dismiss-guide" type="button" class="px-5 py-2 rounded-full bg-amber-300 text-stone-950 font-semibold text-xs hover:bg-amber-200 transition">Resume Walkthrough</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. ARCHITECTURAL ROOM DATA, SPLINE WAYPOINTS & 3D HOTSPOTS
+    // =========================================================================
+    const ROOMS = [
+      {
+        id: 'foyer',
+        index: 0,
+        code: '01',
+        name: 'Grand Entrance Foyer',
+        shortName: '01 Foyer',
+        zone: 'Ground Level · South Entry',
+        progress: 0.0,
+        camPos: { x: 0.0, y: 1.72, z: 9.2 },
+        lookAt: { x: 0.0, y: 1.55, z: 2.0 },
+        fpCoord: { x: 0.0, y: 8.5 },
+        area: '24 m² · 3.8m Ceiling',
+        material: 'Travertine & White Oak',
+        aspect: 'South Axial Courtyard View',
+        climate: '21.5°C · 2700K Linear Cove',
+        description: 'A double-height entry sequence framed in slatted white oak and honed Roman travertine. The pivot glass entrance aligns directly with the central courtyard infinity pool, blurring interior and exterior boundaries.',
+        features: [
+          {
+            id: 'hs-console',
+            title: 'Cantilevered Travertine Console',
+            tag: 'Bespoke Millwork',
+            pos: { x: -2.3, y: 1.05, z: 7.5 },
+            spec: 'Finish: Honed Roman Travertine',
+            dim: 'Dims: 210 × 48 × 82 cm',
+            desc: 'Monolithic stone slab console with concealed wall brackets, topped with a hand-thrown stoneware vessel and warm backlit bronze mirror.'
+          },
+          {
+            id: 'hs-foyer-art',
+            title: 'Triptych Relief Artwork',
+            tag: 'Curated Art',
+            pos: { x: 2.6, y: 1.85, z: 7.5 },
+            spec: 'Medium: Raw Plaster on Linen',
+            dim: 'Dims: 180 × 130 cm',
+            desc: 'Minimalist architectural relief panels finished in natural lime plaster that catch grazing daylight from the courtyard glass.'
+          }
+        ]
+      },
+      {
+        id: 'living',
+        index: 1,
+        code: '02',
+        name: 'Sunken Living Pavilion',
+        shortName: '02 Living',
+        zone: 'West Wing · Main Salon',
+        progress: 0.17,
+        camPos: { x: -8.2, y: 1.68, z: 4.8 },
+        lookAt: { x: -9.8, y: 1.35, z: 0.2 },
+        fpCoord: { x: -8.2, y: 4.8 },
+        area: '58 m² · 3.6m Ceiling',
+        material: 'Bouclé, Fluted Stone & Walnut',
+        aspect: 'East Courtyard & West Garden',
+        climate: '22.0°C · Acoustic Wood Ceiling',
+        description: 'Anchored by a full-height fluted limestone fireplace and a low-slung modular bouclé sectional, the living pavilion opens onto the pool terrace through frameless sliding glass walls.',
+        features: [
+          {
+            id: 'hs-fireplace',
+            title: 'Fluted Limestone Hearth',
+            tag: 'Architectural Focal Point',
+            pos: { x: -12.6, y: 1.6, z: 2.2 },
+            spec: 'Material: CNC-Fluted Jura Limestone',
+            dim: 'Height: 3.6m Full-Height',
+            desc: 'Custom-carved limestone chimney breast housing a recessed bio-ethanol linear ribbon flame and cantilevered blackened steel hearth ledge.'
+          },
+          {
+            id: 'hs-sofa',
+            title: 'Modular Bouclé Lounge System',
+            tag: 'Italian Upholstered Seating',
+            pos: { x: -9.2, y: 0.75, z: 2.5 },
+            spec: 'Upholstery: Belgian Alpaca Bouclé',
+            dim: 'Footprint: 380 × 290 cm',
+            desc: 'Deep-seated architectural sectional resting on a hand-loomed Moroccan wool rug with a low solid walnut and travertine plinth table.'
+          },
+          {
+            id: 'hs-chandelier',
+            title: 'Orbital Brass Ring Chandelier',
+            tag: 'Architectural Lighting',
+            pos: { x: -9.2, y: 2.95, z: 2.5 },
+            spec: 'Output: 2400K Warm Dimming LED',
+            dim: 'Diameter: 165 cm Dual-Ring',
+            desc: 'Suspended satin brass rings providing glare-free warm illumination across the living lounge and acoustic timber ceiling slats.'
+          }
+        ]
+      },
+      {
+        id: 'kitchen',
+        index: 2,
+        code: '03',
+        name: "Chef's Kitchen & Dining Gallery",
+        shortName: '03 Kitchen',
+        zone: 'North-West Wing · Culinary',
+        progress: 0.34,
+        camPos: { x: -8.4, y: 1.72, z: -5.2 },
+        lookAt: { x: -8.2, y: 1.4, z: -9.8 },
+        fpCoord: { x: -8.4, y: -5.2 },
+        area: '46 m² · 3.4m Ceiling',
+        material: 'Calacatta Viola & Smoked Oak',
+        aspect: 'North Panorama & Courtyard',
+        climate: '21.0°C · Whisper Extraction',
+        description: 'A monolithic Calacatta marble waterfall island pairs with floor-to-ceiling smoked oak cabinetry and a sculpted eight-seat solid oak dining table beneath three blown-glass pendant globes.',
+        features: [
+          {
+            id: 'hs-island',
+            title: 'Calacatta Waterfall Island',
+            tag: 'Monolithic Stonework',
+            pos: { x: -9.5, y: 1.0, z: -8.8 },
+            spec: 'Stone: Bookmatched Calacatta Marble',
+            dim: 'Dims: 340 × 115 × 92 cm',
+            desc: 'Mitered 60mm marble edges with integrated flush induction cooking surface, brushed brass gooseneck tap, and four cognac saddle-leather stools.'
+          },
+          {
+            id: 'hs-dining',
+            title: 'Sculpted White Oak Dining Table',
+            tag: 'Dining Gallery',
+            pos: { x: -5.5, y: 0.95, z: -6.8 },
+            spec: 'Timber: Kiln-Dried Danish White Oak',
+            dim: 'Seating: 8 Guests (280 × 105 cm)',
+            desc: 'Hand-chamfered plank dining table illuminated by a trio of warm opal glass spheres that cast soft diffused light over evening gatherings.'
+          }
+        ]
+      },
+      {
+        id: 'study',
+        index: 3,
+        code: '04',
+        name: 'Glass Atrium & Library Study',
+        shortName: '04 Study',
+        zone: 'North Bridge · Sanctuary',
+        progress: 0.50,
+        camPos: { x: 0.8, y: 1.72, z: -7.5 },
+        lookAt: { x: 1.0, y: 1.5, z: -10.8 },
+        fpCoord: { x: 0.8, y: -7.5 },
+        area: '28 m² · 3.4m Ceiling',
+        material: 'Walnut Joinery & Acoustic Glass',
+        aspect: 'Direct Courtyard Pool Vista',
+        climate: '21.5°C · 38dB Acoustic Isolation',
+        description: 'Bridging the public living wing and private suite wing, this glass-walled gallery features full-height illuminated walnut bookshelves, an architect desk, and a reading lounge overlooking the courtyard.',
+        features: [
+          {
+            id: 'hs-bookshelf',
+            title: 'Backlit Walnut Library Wall',
+            tag: 'Custom Millwork',
+            pos: { x: 1.0, y: 1.9, z: -11.3 },
+            spec: 'Joinery: American Black Walnut',
+            dim: 'Span: 5.2m × 3.4m Full Height',
+            desc: 'Floor-to-ceiling shelving bays with integrated 2700K LED shelf grazing, housing architectural monographs and ceramic collectibles.'
+          },
+          {
+            id: 'hs-desk',
+            title: 'Cantilevered Study Desk & Lounge',
+            tag: 'Workspace',
+            pos: { x: 1.0, y: 0.9, z: -8.6 },
+            spec: 'Surface: Matte Saddle Leather Inlay',
+            dim: 'Dims: 200 × 85 cm',
+            desc: 'Positioned to command a tranquil view of the central courtyard water mirror while shielded from direct glare by deep roof overhangs.'
+          }
+        ]
+      },
+      {
+        id: 'bedroom',
+        index: 4,
+        code: '05',
+        name: 'Primary Suite Sanctuary',
+        shortName: '05 Primary Suite',
+        zone: 'North-East Wing · Private',
+        progress: 0.67,
+        camPos: { x: 8.5, y: 1.68, z: -5.2 },
+        lookAt: { x: 9.4, y: 1.35, z: -9.5 },
+        fpCoord: { x: 8.5, y: -5.2 },
+        area: '42 m² · 3.2m Ceiling',
+        material: 'Wide-Plank Oak & Raw Linen',
+        aspect: 'Morning East Garden Light',
+        climate: '20.5°C · Circadian Smart Dimming',
+        description: 'Designed as a serene acoustic cocoon, the primary suite features a slatted walnut acoustic headboard wall, floating alabaster bedside spheres, and direct access to both the courtyard and spa bath.',
+        features: [
+          {
+            id: 'hs-bed',
+            title: 'Floating Linen Platform Bed',
+            tag: 'Primary Sleeping Zone',
+            pos: { x: 9.2, y: 0.85, z: -8.8 },
+            spec: 'Textiles: Belgian Washed Flax Linen',
+            dim: 'Size: Architectural King (220 × 220 cm)',
+            desc: 'Recessed plinth base creates a floating silhouette, paired with custom slatted timber wall panelling and warm alabaster reading sconces.'
+          },
+          {
+            id: 'hs-wardrobe',
+            title: 'Smoked Glass Dressing Vitrine',
+            tag: 'Boutique Wardrobe',
+            pos: { x: 12.6, y: 1.6, z: -6.8 },
+            spec: 'Glazing: Bronze Tinted Tempered Glass',
+            dim: 'Length: 4.4m Walk-In Run',
+            desc: 'Integrated motion-activated LED wardrobe bays framed in anodized bronze profiles.'
+          }
+        ]
+      },
+      {
+        id: 'bathroom',
+        index: 5,
+        code: '06',
+        name: 'Spa Wet-Room & Stone Bath',
+        shortName: '06 Spa Bath',
+        zone: 'East Wing · Wellness',
+        progress: 0.84,
+        camPos: { x: 9.2, y: 1.68, z: 1.2 },
+        lookAt: { x: 9.8, y: 1.25, z: 4.8 },
+        fpCoord: { x: 9.2, y: 1.2 },
+        area: '22 m² · 3.2m Ceiling',
+        material: 'Pietra Grey Stone & Teak',
+        aspect: 'Frosted Clerestory & Courtyard',
+        climate: '24.0°C · Hydronic Floor Heating',
+        description: 'A resort-caliber wet room centered around a hand-carved freestanding composite stone soaking tub on a slatted Burmese teak deck, complemented by a double floating vanity and rain shower.',
+        features: [
+          {
+            id: 'hs-tub',
+            title: 'Sculptural Freestanding Soaking Tub',
+            tag: 'Hydrotherapy Centerpiece',
+            pos: { x: 9.8, y: 0.75, z: 4.2 },
+            spec: 'Material: Matte Volcanic Limestone Resin',
+            dim: 'Capacity: 340L Deep Soak',
+            desc: 'Set atop a recessed river-pebble and teak drainage plinth with a floor-mounted brushed brass filler and courtyard view.'
+          },
+          {
+            id: 'hs-vanity',
+            title: 'Dual Floating Stone Vanity',
+            tag: 'Bespoke Fixtures',
+            pos: { x: 12.5, y: 1.15, z: 1.8 },
+            spec: 'Mirrors: Dual Halo Backlit 3000K',
+            dim: 'Width: 240 cm Double Basin',
+            desc: 'Integrated stone vessel basins with wall-mounted brushed brass spouts and humidity-resistant halo mirrors.'
+          }
+        ]
+      },
+      {
+        id: 'courtyard',
+        index: 6,
+        code: '07',
+        name: 'Courtyard & Infinity Pool Deck',
+        shortName: '07 Pool Deck',
+        zone: 'Central Atrium · Outdoor Living',
+        progress: 1.0,
+        camPos: { x: 0.0, y: 1.75, z: 3.6 },
+        lookAt: { x: 0.0, y: 1.35, z: -3.5 },
+        fpCoord: { x: 0.0, y: 3.6 },
+        area: '85 m² · Open Sky Atrium',
+        material: 'Thermo-Ash Decking & Sukabumi Tile',
+        aspect: '360° Glass Pavilion Surround',
+        climate: '28.0°C Heated Saltwater Pool',
+        description: 'The heart of Villa Solis—an open-sky courtyard wrapped on three sides by the glass pavilions of the home. Features a zero-edge mirror pool, teak sun loungers, and architectural olive trees.',
+        features: [
+          {
+            id: 'hs-pool',
+            title: 'Zero-Edge Heated Infinity Pool',
+            tag: 'Water Architecture',
+            pos: { x: 0.0, y: 0.2, z: 0.5 },
+            spec: 'Lining: Bali Green Sukabumi Quartzite',
+            dim: 'Dims: 7.5m × 4.2m × 1.4m',
+            desc: 'Acts as a thermal regulator and reflective light well, bouncing dappled water caustics into the surrounding living and study pavilions.'
+          },
+          {
+            id: 'hs-loungers',
+            title: 'Architectural Teak Sun Deck',
+            tag: 'Outdoor Lounge',
+            pos: { x: -3.6, y: 0.5, z: 1.2 },
+            spec: 'Timber: Plantation Grade-A Teak',
+            dim: 'Upholstery: Weatherproof Sunbrella Ecru',
+            desc: 'Low-profile slatted loungers positioned along the western pool coping for afternoon sun and evening stargazing.'
+          }
+        ]
+      }
+    ];
+
+    // Flatten all hotspots for fast 3D projection lookup
+    const ALL_HOTSPOTS = [];
+    ROOMS.forEach((room) => {
+      room.features.forEach((feat) => {
+        ALL_HOTSPOTS.push({
+          ...feat,
+          roomIndex: room.index,
+          roomName: room.name
+        });
+      });
+    });
+
+    // =========================================================================
+    // 2. APPLICATION STATE & INTERACTION VARIABLES
+    // =========================================================================
+    const state = {
+      // Primary Mode: 'tour' (Cinematic Spline Walkthrough) vs 'explore' (Game FPS Exploration)
+      mode: 'tour',
+      
+      // Tour Mode Spline Progress
+      targetProgress: 0.0,    // 0.0 -> 1.0 along spline
+      currentProgress: 0.0,
+      activeRoomIndex: 0,
+      
+      // 360° Perspective Look Angles (in radians)
+      targetYaw: 0.0,         // Full 360° unrestricted horizontal scrubbing / player yaw
+      currentYaw: 0.0,
+      targetPitch: 0.0,       // Clamped vertical pitch (-65° to +65°)
+      currentPitch: 0.0,
+      
+      // Game Explorer First-Person Player Physics
+      playerPos: new THREE.Vector3(0.0, 1.72, 9.2),
+      playerVelocity: new THREE.Vector3(0.0, 0.0, 0.0),
+      verticalVelocity: 0.0,
+      isGrounded: true,
+      isCrouched: false,
+      crouchProgress: 0.0,
+      walkCycle: 0.0,
+      headBobY: 0.0,
+      keys: {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        sprint: false,
+        jump: false
+      },
+      isPointerLocked: false,
+      flashlightOn: false,
+      soundEnabled: false,
+      interactTarget: null,
+      
+      // Camera FOV (Lens Zoom)
+      targetFov: 62,
+      currentFov: 62,
+      
+      // Interaction & Display States
+      isDragging: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      yawOnDragStart: 0,
+      pitchOnDragStart: 0,
+      pointerMovedDistance: 0,
+      autoOrbit: false,
+      autoWalk: false,
+      lightingMode: 'day',    // 'day' | 'sunset' | 'night'
+      highDpiMode: false,     // Balanced vs High-DPI
+      detailsExpanded: true,
+      minimapVisible: true,
+      selectedHotspotId: null,
+      hasInteracted: false
+    };
+
+    // =========================================================================
+    // 3. PROCEDURAL TEXTURE GENERATOR (ZERO NETWORK LOAD, INSTANT GPU MIPMAPS)
+    // =========================================================================
+    function createProceduralTexture(type) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      if (type === 'travertine') {
+        ctx.fillStyle = '#e4ddd3';
+        ctx.fillRect(0, 0, 256, 256);
+        for (let i = 0; i < 40; i++) {
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(205, 195, 180, 0.35)' : 'rgba(245, 240, 232, 0.35)';
+          ctx.fillRect(0, (i * 7) % 256, 256, 2 + (i % 5));
+        }
+        // Subtle tile grout lines
+        ctx.strokeStyle = 'rgba(160, 150, 138, 0.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, 126, 126);
+        ctx.strokeRect(129, 1, 126, 126);
+        ctx.strokeRect(1, 129, 126, 126);
+        ctx.strokeRect(129, 129, 126, 126);
+      } else if (type === 'oak') {
+        ctx.fillStyle = '#b98b5e';
+        ctx.fillRect(0, 0, 256, 256);
+        for (let i = 0; i < 65; i++) {
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(145, 102, 62, 0.22)' : 'rgba(205, 162, 118, 0.18)';
+          ctx.fillRect((i * 13) % 256, 0, 3 + (i % 4), 256);
+        }
+        ctx.strokeStyle = 'rgba(95, 65, 38, 0.35)';
+        ctx.lineWidth = 1.5;
+        for (let x = 0; x < 256; x += 32) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, 256);
+          ctx.stroke();
+        }
+      } else if (type === 'walnut') {
+        ctx.fillStyle = '#5a3d28';
+        ctx.fillRect(0, 0, 256, 256);
+        for (let i = 0; i < 60; i++) {
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(65, 42, 25, 0.35)' : 'rgba(110, 78, 52, 0.25)';
+          ctx.fillRect(0, (i * 9) % 256, 256, 3 + (i % 6));
+        }
+      } else if (type === 'marble') {
+        ctx.fillStyle = '#f3f1ed';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = 'rgba(135, 125, 130, 0.38)';
+        for (let v = 0; v < 9; v++) {
+          ctx.lineWidth = 1 + (v % 3);
+          ctx.beginPath();
+          let x = (v * 37) % 256;
+          let y = 0;
+          ctx.moveTo(x, y);
+          while (y < 256) {
+            y += 24;
+            x += Math.sin(y * 0.05 + v) * 18;
+            ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      } else if (type === 'rug') {
+        ctx.fillStyle = '#d8d0c5';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = 'rgba(165, 152, 136, 0.35)';
+        ctx.lineWidth = 2;
+        for (let i = 16; i < 256; i += 24) {
+          ctx.beginPath();
+          ctx.moveTo(0, i);
+          ctx.lineTo(256, i);
+          ctx.stroke();
+        }
+      } else if (type === 'pool') {
+        ctx.fillStyle = '#0e7490';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = 'rgba(103, 232, 249, 0.35)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 18; i++) {
+          ctx.beginPath();
+          ctx.arc((i * 53) % 240 + 8, (i * 71) % 240 + 8, 14 + (i % 12), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    // Soft radial drop-shadow texture for grounding furniture with zero GPU shadow cost
+    function createSoftShadowTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      const grad = ctx.createRadialGradient(64, 64, 10, 64, 64, 60);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.42)');
+      grad.addColorStop(0.6, 'rgba(0, 0, 0, 0.16)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 128, 128);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    // =========================================================================
+    // 4. THREE.JS SCENE, CAMERA SPLINE & ARCHITECTURAL MODEL BUILDER
+    // =========================================================================
+    const container = document.getElementById('webgl-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdbe4eb);
+    scene.fog = new THREE.FogExp2(0xdbe4eb, 0.014);
+
+    const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 110);
+    camera.rotation.order = 'YXZ';
+
+    // Player Architectural Flashlight / Headlamp (Attached to camera)
+    const flashlight = new THREE.SpotLight(0xfff7e6, 0, 26, Math.PI / 4.8, 0.45, 1.6);
+    flashlight.position.set(0, 0, 0.1);
+    const flashlightTarget = new THREE.Object3D();
+    flashlightTarget.position.set(0, 0, -5);
+    camera.add(flashlight);
+    camera.add(flashlightTarget);
+    flashlight.target = flashlightTarget;
+    scene.add(camera);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: 'high-performance'
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Smooth balanced default
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    container.appendChild(renderer.domElement);
+
+    // Build smooth Catmull-Rom walkthrough camera spline & target lookAt spline
+    const camSplinePoints = [
+      new THREE.Vector3(0.0, 1.72, 9.2),    // 01 Foyer
+      new THREE.Vector3(-4.2, 1.70, 7.2),   // Transition Foyer -> Living
+      new THREE.Vector3(-8.2, 1.68, 4.8),   // 02 Living Pavilion
+      new THREE.Vector3(-8.6, 1.70, -0.5),  // Transition Living -> Kitchen
+      new THREE.Vector3(-8.4, 1.72, -5.2),  // 03 Kitchen & Dining
+      new THREE.Vector3(-4.0, 1.72, -7.2),  // Transition Kitchen -> Study
+      new THREE.Vector3(0.8, 1.72, -7.5),   // 04 Glass Atrium Study
+      new THREE.Vector3(5.2, 1.70, -7.0),   // Transition Study -> Bedroom
+      new THREE.Vector3(8.5, 1.68, -5.2),   // 05 Primary Bedroom
+      new THREE.Vector3(8.9, 1.68, -1.8),   // Transition Bedroom -> Bath
+      new THREE.Vector3(9.2, 1.68, 1.2),    // 06 Spa Bath
+      new THREE.Vector3(4.8, 1.72, 3.2),    // Transition Bath -> Courtyard
+      new THREE.Vector3(0.0, 1.75, 3.6)     // 07 Courtyard & Infinity Pool
+    ];
+
+    const lookSplinePoints = [
+      new THREE.Vector3(0.0, 1.55, 2.0),    // 01 Foyer looking North
+      new THREE.Vector3(-8.5, 1.45, 3.5),   // Transition looking into Living
+      new THREE.Vector3(-9.8, 1.35, 0.2),   // 02 Living looking at Fireplace & Sofa
+      new THREE.Vector3(-8.8, 1.40, -6.0),  // Transition looking toward Kitchen
+      new THREE.Vector3(-8.2, 1.40, -9.8),  // 03 Kitchen looking at Island & Dining
+      new THREE.Vector3(-1.0, 1.45, -9.2),  // Transition into Study
+      new THREE.Vector3(1.0, 1.50, -10.8),  // 04 Study looking at Bookshelf & Desk
+      new THREE.Vector3(7.5, 1.45, -8.5),   // Transition into Primary Suite
+      new THREE.Vector3(9.4, 1.35, -9.5),   // 05 Primary Suite looking at Bed
+      new THREE.Vector3(9.8, 1.35, 0.5),    // Transition into Spa Bath
+      new THREE.Vector3(9.8, 1.25, 4.8),    // 06 Spa Bath looking at Soaking Tub
+      new THREE.Vector3(1.5, 1.30, 1.2),    // Transition onto Pool Deck
+      new THREE.Vector3(0.0, 1.35, -3.5)    // 07 Courtyard looking across Pool
+    ];
+
+    const cameraCurve = new THREE.CatmullRomCurve3(camSplinePoints, false, 'catmullrom', 0.45);
+    const lookAtCurve = new THREE.CatmullRomCurve3(lookSplinePoints, false, 'catmullrom', 0.45);
+
+    // Lighting Setup (Optimized for high visual realism with minimal shader overhead)
+    const hemiLight = new THREE.HemisphereLight(0xfffcf5, 0x6e655f, 0.85);
+    hemiLight.position.set(0, 25, 0);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfff4e0, 1.15);
+    sunLight.position.set(18, 28, 16);
+    scene.add(sunLight);
+
+    // Interior Warm Point Lights (grouped for smooth dimming across Day/Sunset/Night)
+    const interiorLights = [];
+    function addWarmRoomLight(x, y, z, intensity, distance, colorHex = 0xffcb8e) {
+      const light = new THREE.PointLight(colorHex, intensity, distance, 1.8);
+      light.position.set(x, y, z);
+      scene.add(light);
+      interiorLights.push({ light, baseIntensity: intensity });
+      return light;
+    }
+
+    addWarmRoomLight(0, 3.3, 8.2, 0.9, 12);         // Foyer Cove
+    addWarmRoomLight(-9.2, 3.0, 2.5, 1.2, 15);      // Living Chandelier
+    addWarmRoomLight(-12.2, 1.1, 2.2, 1.1, 8, 0xff7b3d); // Fireplace Hearth Glow
+    addWarmRoomLight(-8.5, 2.9, -7.8, 1.2, 15);     // Kitchen & Dining Pendants
+    addWarmRoomLight(1.0, 3.0, -9.2, 1.0, 13);      // Study Library Grazing
+    addWarmRoomLight(9.2, 2.8, -7.8, 1.1, 14);      // Primary Bedroom Warm Glow
+    addWarmRoomLight(9.8, 2.9, 2.8, 1.0, 12);       // Spa Bath Cove
+    addWarmRoomLight(0.0, 0.4, 0.5, 0.9, 14, 0x38bdf8); // Pool Underwater Glow
+
+    // Shared Cached Textures & Materials
+    const texTravertine = createProceduralTexture('travertine');
+    texTravertine.repeat.set(8, 8);
+    const texOak = createProceduralTexture('oak');
+    texOak.repeat.set(6, 6);
+    const texWalnut = createProceduralTexture('walnut');
+    texWalnut.repeat.set(2, 2);
+    const texMarble = createProceduralTexture('marble');
+    texMarble.repeat.set(2, 2);
+    const texRug = createProceduralTexture('rug');
+    texRug.repeat.set(3, 3);
+    const texPool = createProceduralTexture('pool');
+    texPool.repeat.set(3, 3);
+    const texShadow = createSoftShadowTexture();
+
+    const MAT = {
+      travertine: new THREE.MeshStandardMaterial({ map: texTravertine, roughness: 0.55, metalness: 0.05 }),
+      oakFloor: new THREE.MeshStandardMaterial({ map: texOak, roughness: 0.48, metalness: 0.06 }),
+      walnut: new THREE.MeshStandardMaterial({ map: texWalnut, roughness: 0.42, metalness: 0.08 }),
+      marble: new THREE.MeshStandardMaterial({ map: texMarble, roughness: 0.25, metalness: 0.1 }),
+      rug: new THREE.MeshStandardMaterial({ map: texRug, roughness: 0.92, metalness: 0.0 }),
+      plasterWarm: new THREE.MeshStandardMaterial({ color: 0xf4f0ea, roughness: 0.82, metalness: 0.02 }),
+      plasterSand: new THREE.MeshStandardMaterial({ color: 0xe6dfd5, roughness: 0.85, metalness: 0.02 }),
+      charcoalStone: new THREE.MeshStandardMaterial({ color: 0x2b2d32, roughness: 0.65, metalness: 0.15 }),
+      flutedStone: new THREE.MeshStandardMaterial({ color: 0xd8cfc2, roughness: 0.72, metalness: 0.05 }),
+      boucleCream: new THREE.MeshStandardMaterial({ color: 0xf2ede4, roughness: 0.95, metalness: 0.0 }),
+      linenTaupe: new THREE.MeshStandardMaterial({ color: 0xc9bfb3, roughness: 0.88, metalness: 0.0 }),
+      leatherCognac: new THREE.MeshStandardMaterial({ color: 0x9c5a35, roughness: 0.45, metalness: 0.1 }),
+      brass: new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.26, metalness: 0.82 }),
+      bronzeDark: new THREE.MeshStandardMaterial({ color: 0x23201e, roughness: 0.35, metalness: 0.75 }),
+      glass: new THREE.MeshPhysicalMaterial({
+        color: 0xdbeafe,
+        transparent: true,
+        opacity: 0.24,
+        roughness: 0.08,
+        metalness: 0.1,
+        side: THREE.DoubleSide
+      }),
+      mirror: new THREE.MeshStandardMaterial({ color: 0xd8e2eb, roughness: 0.06, metalness: 0.92 }),
+      glowBulb: new THREE.MeshBasicMaterial({ color: 0xfff3d1 }),
+      emberGlow: new THREE.MeshBasicMaterial({ color: 0xff6b2b }),
+      poolWater: new THREE.MeshStandardMaterial({
+        map: texPool,
+        color: 0x22d3ee,
+        roughness: 0.15,
+        metalness: 0.2,
+        transparent: true,
+        opacity: 0.86
+      }),
+      foliage: new THREE.MeshStandardMaterial({ color: 0x3f6244, roughness: 0.75 }),
+      terracotta: new THREE.MeshStandardMaterial({ color: 0xa86448, roughness: 0.7 }),
+      groundLawn: new THREE.MeshStandardMaterial({ color: 0xc8c2b8, roughness: 0.95 })
+    };
+
+    // Helper: create box mesh quickly
+    const sharedBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+    const sharedCylGeo = new THREE.CylinderGeometry(1, 1, 1, 20);
+    const sharedSphereGeo = new THREE.SphereGeometry(1, 18, 14);
+    const sharedPlaneGeo = new THREE.PlaneGeometry(1, 1);
+
+    function addBox(w, h, d, x, y, z, mat, parent = scene, rotY = 0) {
+      const m = new THREE.Mesh(sharedBoxGeo, mat);
+      m.scale.set(w, h, d);
+      m.position.set(x, y, z);
+      if (rotY) m.rotation.y = rotY;
+      parent.add(m);
+      return m;
+    }
+
+    function addCyl(rTop, rBot, h, x, y, z, mat, parent = scene) {
+      const geo = (rTop === 1 && rBot === 1) ? sharedCylGeo : new THREE.CylinderGeometry(rTop, rBot, 1, 20);
+      const m = new THREE.Mesh(geo, mat);
+      if (geo === sharedCylGeo) {
+        m.scale.set(rTop, h, rBot);
+      } else {
+        m.scale.set(1, h, 1);
+      }
+      m.position.set(x, y, z);
+      parent.add(m);
+      return m;
+    }
+
+    function addDropShadow(w, d, x, z, opacity = 0.5) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: texShadow,
+        transparent: true,
+        opacity: opacity,
+        depthWrite: false
+      });
+      const m = new THREE.Mesh(sharedPlaneGeo, mat);
+      m.rotation.x = -Math.PI / 2;
+      m.scale.set(w, d, 1);
+      m.position.set(x, 0.025, z);
+      scene.add(m);
+    }
+
+    function addArchitecturalPlant(x, z, scale = 1.0) {
+      const group = new THREE.Group();
+      group.position.set(x, 0, z);
+      // Planter pot
+      addCyl(0.32 * scale, 0.24 * scale, 0.55 * scale, 0, 0.28 * scale, 0, MAT.terracotta, group);
+      // Trunk
+      addCyl(0.04 * scale, 0.06 * scale, 1.2 * scale, 0, 0.9 * scale, 0, MAT.walnut, group);
+      // Canopy spheres
+      const canopyOffsets = [
+        [0, 1.55, 0, 0.42],
+        [0.24, 1.4, 0.18, 0.32],
+        [-0.22, 1.45, -0.15, 0.34],
+        [0.12, 1.75, -0.18, 0.28]
+      ];
+      canopyOffsets.forEach(([ox, oy, oz, r]) => {
+        const leaf = new THREE.Mesh(sharedSphereGeo, MAT.foliage);
+        leaf.scale.set(r * scale, r * 0.85 * scale, r * scale);
+        leaf.position.set(ox * scale, oy * scale, oz * scale);
+        group.add(leaf);
+      });
+      scene.add(group);
+      addDropShadow(0.95 * scale, 0.95 * scale, x, z, 0.4);
+    }
+
+    // =========================================================================
+    // 5. CONSTRUCTING THE VILLA SOLIS 3D ARCHITECTURAL MODEL
+    // =========================================================================
+    function buildVillaModel() {
+      // 1. Exterior Surroundings & Plinth
+      addBox(90, 0.2, 90, 0, -0.15, 0, MAT.groundLawn);
+      // Main Travertine Residence Floor Plate
+      addBox(29, 0.12, 24, 0, -0.05, -0.5, MAT.travertine);
+      // Hardwood Flooring Zones (Living, Study, Primary Bedroom)
+      addBox(8.2, 0.02, 10.8, -9.5, 0.015, 3.5, MAT.oakFloor);
+      addBox(9.2, 0.02, 9.8, 9.2, 0.015, -7.0, MAT.oakFloor);
+
+      // 2. Architectural Roof Slabs & Acoustic Timber Ceiling Planes
+      const H = 3.6;
+      // West Wing Roof (Living + Kitchen)
+      addBox(9.5, 0.28, 22.5, -9.2, H + 0.14, -1.5, MAT.plasterWarm);
+      // North Wing Roof (Study + Primary Suite)
+      addBox(19.5, 0.28, 8.8, 4.5, H + 0.14, -8.2, MAT.plasterWarm);
+      // East Wing Roof (Spa Bath)
+      addBox(9.2, 0.28, 9.5, 9.5, H + 0.14, 1.5, MAT.plasterWarm);
+      // South Entry Canopy (Foyer)
+      addBox(9.5, 0.28, 6.5, 0.0, H + 0.14, 8.2, MAT.plasterWarm);
+
+      // Warm Timber Ceiling Slat Accents in Foyer & Living
+      for (let i = -3.2; i <= 3.2; i += 0.45) {
+        addBox(0.12, 0.08, 5.8, i, H - 0.04, 8.2, MAT.walnut);
+      }
+      for (let z = -1.5; z <= 6.5; z += 0.55) {
+        addBox(7.2, 0.07, 0.14, -9.5, H - 0.04, z, MAT.walnut);
+      }
+
+      // 3. Perimeter & Interior Architectural Walls (with wide open portal sightlines)
+      // Outer South Entry Walls
+      addBox(4.2, H, 0.25, -4.5, H / 2, 11.2, MAT.plasterWarm);
+      addBox(4.2, H, 0.25, 4.5, H / 2, 11.2, MAT.plasterWarm);
+      // Glass Entry Portal Frame
+      addBox(4.8, H, 0.06, 0, H / 2, 11.2, MAT.glass);
+      addBox(0.12, H, 0.16, -2.35, H / 2, 11.2, MAT.bronzeDark);
+      addBox(0.12, H, 0.16, 2.35, H / 2, 11.2, MAT.bronzeDark);
+
+      // Foyer East & West Feature Walls
+      addBox(0.28, H, 4.2, -3.6, H / 2, 8.0, MAT.plasterSand);
+      addBox(0.28, H, 4.2, 3.6, H / 2, 8.0, MAT.plasterSand);
+
+      // Outer West Wall (Living + Kitchen)
+      addBox(0.3, H, 21.8, -13.6, H / 2, -1.2, MAT.plasterWarm);
+      // South-West Wall closing Living Room
+      addBox(7.2, H, 0.28, -10.0, H / 2, 9.5, MAT.plasterWarm);
+
+      // Outer North Wall (Kitchen + Study + Primary Suite)
+      addBox(27.5, H, 0.3, 0.0, H / 2, -12.0, MAT.plasterWarm);
+
+      // Outer East Wall (Primary Suite + Spa Bath)
+      addBox(0.3, H, 19.5, 13.6, H / 2, -2.2, MAT.plasterWarm);
+      // South-East Wall closing Spa Bath
+      addBox(7.2, H, 0.28, 10.0, H / 2, 7.2, MAT.plasterWarm);
+
+      // Partial Divider Walls with Wide Architectural Portals
+      addBox(3.6, H, 0.25, -11.8, H / 2, -2.8, MAT.plasterSand); // Between Living & Kitchen
+      addBox(0.25, H, 4.2, -3.8, H / 2, -9.8, MAT.plasterSand);  // Between Kitchen & Study
+      addBox(0.25, H, 4.2, 4.6, H / 2, -9.8, MAT.plasterSand);   // Between Study & Bedroom
+      addBox(3.8, H, 0.25, 11.6, H / 2, -2.2, MAT.plasterSand);  // Between Bedroom & Spa Bath
+
+      // Courtyard Framing Glass Walls & Bronze Mullions
+      addBox(0.06, H, 8.8, -5.2, H / 2, 1.5, MAT.glass); // Living to Courtyard Glass
+      addBox(8.5, H, 0.06, 0.0, H / 2, -4.2, MAT.glass); // Study to Courtyard Glass
+      addBox(0.06, H, 8.8, 5.2, H / 2, 1.5, MAT.glass);  // Bath/Suite to Courtyard Glass
+      for (let z = -2.5; z <= 5.5; z += 2.6) {
+        addBox(0.1, H, 0.1, -5.2, H / 2, z, MAT.bronzeDark);
+        addBox(0.1, H, 0.1, 5.2, H / 2, z, MAT.bronzeDark);
+      }
+
+      // -----------------------------------------------------------------------
+      // ROOM 01: GRAND ENTRANCE FOYER
+      // -----------------------------------------------------------------------
+      // Travertine Console Table (West Foyer Wall)
+      addBox(0.55, 0.82, 2.1, -3.1, 0.41, 7.8, MAT.travertine);
+      addDropShadow(0.9, 2.4, -3.1, 7.8, 0.45);
+      // Ceramic Sculptural Vessel & Halo Mirror above Console
+      addCyl(0.14, 0.1, 0.38, -3.1, 1.01, 7.5, MAT.terracotta);
+      addCyl(0.65, 0.65, 0.04, -3.42, 1.85, 7.8, MAT.mirror).rotation.z = Math.PI / 2;
+      // East Wall Triptych Relief Art Panels
+      [-0.75, 0, 0.75].forEach((dz) => {
+        addBox(0.06, 1.35, 0.58, 3.42, 1.85, 7.8 + dz, MAT.charcoalStone);
+        addBox(0.08, 1.15, 0.44, 3.40, 1.85, 7.8 + dz, MAT.plasterWarm);
+      });
+      addArchitecturalPlant(-2.8, 9.8, 1.05);
+
+      // -----------------------------------------------------------------------
+      // ROOM 02: SUNKEN LIVING PAVILION
+      // -----------------------------------------------------------------------
+      // Large Textured Wool Rug
+      addBox(5.2, 0.03, 6.2, -9.2, 0.03, 2.5, MAT.rug);
+      // Fluted Limestone Fireplace Chimney Breast (West Wall)
+      addBox(0.75, H, 2.6, -13.1, H / 2, 2.2, MAT.flutedStone);
+      addBox(0.85, 0.25, 3.2, -12.9, 0.13, 2.2, MAT.charcoalStone); // Hearth plinth
+      addBox(0.45, 0.48, 1.7, -12.75, 0.65, 2.2, MAT.charcoalStone); // Firebox recess
+      addBox(0.12, 0.18, 1.35, -12.65, 0.55, 2.2, MAT.emberGlow);    // Glowing flame ribbon
+
+      // L-Shaped Bouclé Modular Sectional Sofa
+      // Main Sofa Run facing West Fireplace
+      addBox(1.05, 0.42, 3.6, -7.5, 0.22, 2.2, MAT.boucleCream);
+      addBox(0.28, 0.78, 3.6, -7.05, 0.40, 2.2, MAT.boucleCream); // Backrest
+      // Chaise Return facing North
+      addBox(2.4, 0.42, 1.05, -8.8, 0.22, 4.4, MAT.boucleCream);
+      addBox(2.4, 0.78, 0.28, -8.8, 0.40, 4.85, MAT.boucleCream);
+      addDropShadow(4.2, 4.6, -8.3, 2.8, 0.55);
+
+      // Accent Throw Pillows
+      addBox(0.22, 0.35, 0.45, -7.35, 0.56, 1.1, MAT.leatherCognac, scene, 0.2);
+      addBox(0.22, 0.35, 0.45, -7.35, 0.56, 3.2, MAT.linenTaupe, scene, -0.15);
+
+      // Low Walnut & Marble Coffee Table
+      addBox(1.3, 0.32, 1.9, -9.6, 0.18, 2.0, MAT.walnut);
+      addBox(1.15, 0.05, 1.75, -9.6, 0.36, 2.0, MAT.marble);
+      addDropShadow(1.6, 2.2, -9.6, 2.0, 0.5);
+
+      // Orbital Dual-Ring Brass Chandelier
+      const ringGeo1 = new THREE.TorusGeometry(0.85, 0.025, 12, 40);
+      const ring1 = new THREE.Mesh(ringGeo1, MAT.brass);
+      ring1.rotation.x = Math.PI / 2;
+      ring1.position.set(-9.2, 2.95, 2.3);
+      scene.add(ring1);
+      const ringGeo2 = new THREE.TorusGeometry(0.52, 0.02, 12, 32);
+      const ring2 = new THREE.Mesh(ringGeo2, MAT.glowBulb);
+      ring2.rotation.x = Math.PI / 2;
+      ring2.position.set(-9.2, 2.82, 2.3);
+      scene.add(ring2);
+
+      addArchitecturalPlant(-12.4, 5.8, 1.2);
+
+      // -----------------------------------------------------------------------
+      // ROOM 03: CHEF'S KITCHEN & DINING GALLERY
+      // -----------------------------------------------------------------------
+      // Back Cabinetry Wall (North-West)
+      addBox(5.2, 2.8, 0.7, -9.8, 1.4, -11.4, MAT.walnut);
+      addBox(3.2, 1.1, 0.55, -9.8, 1.45, -11.2, MAT.marble); // Backsplash niche
+
+      // Monolithic Calacatta Waterfall Kitchen Island
+      addBox(3.4, 0.92, 1.15, -9.6, 0.46, -8.8, MAT.marble);
+      addBox(3.2, 0.86, 0.95, -9.6, 0.43, -8.8, MAT.charcoalStone); // Recessed island core
+      addBox(0.9, 0.02, 0.55, -10.3, 0.93, -8.8, MAT.charcoalStone); // Induction cooktop
+      addCyl(0.02, 0.02, 0.38, -8.6, 1.1, -8.8, MAT.brass); // Brass tap
+      addDropShadow(3.9, 1.6, -9.6, -8.8, 0.55);
+
+      // 4 Cognac Leather Counter Stools
+      [-10.8, -10.0, -9.2, -8.4].forEach((sx) => {
+        addCyl(0.22, 0.22, 0.08, sx, 0.66, -7.95, MAT.leatherCognac);
+        addCyl(0.03, 0.03, 0.64, sx, 0.32, -7.95, MAT.bronzeDark);
+      });
+
+      // 8-Seat Solid White Oak Dining Table & Pendant Globes
+      addBox(1.05, 0.07, 2.7, -5.5, 0.76, -6.8, MAT.oakFloor);
+      addBox(0.12, 0.74, 0.65, -5.5, 0.37, -5.8, MAT.walnut);
+      addBox(0.12, 0.74, 0.65, -5.5, 0.37, -7.8, MAT.walnut);
+      addDropShadow(1.6, 3.1, -5.5, -6.8, 0.5);
+
+      // 6 Sculpted Dining Chairs around Table
+      [-7.7, -6.8, -5.9].forEach((cz) => {
+        addBox(0.46, 0.45, 0.46, -6.3, 0.23, cz, MAT.linenTaupe);
+        addBox(0.46, 0.45, 0.46, -4.7, 0.23, cz, MAT.linenTaupe);
+      });
+
+      // Trio of Blown-Glass Pendant Globes over Dining Table
+      [-7.6, -6.8, -6.0].forEach((pz) => {
+        const globe = new THREE.Mesh(sharedSphereGeo, MAT.glowBulb);
+        globe.scale.set(0.18, 0.18, 0.18);
+        globe.position.set(-5.5, 2.45, pz);
+        scene.add(globe);
+        addCyl(0.01, 0.01, 1.1, -5.5, 3.0, pz, MAT.brass);
+      });
+
+      // -----------------------------------------------------------------------
+      // ROOM 04: GLASS ATRIUM & LIBRARY STUDY
+      // -----------------------------------------------------------------------
+      // Full-Height Backlit Walnut Bookshelf Wall
+      addBox(5.4, 3.3, 0.45, 0.8, 1.65, -11.5, MAT.walnut);
+      for (let sy = 0.65; sy <= 2.9; sy += 0.68) {
+        addBox(5.1, 0.05, 0.48, 0.8, sy, -11.45, MAT.oakFloor);
+        // Sculptural books & objects on shelves
+        addBox(0.45, 0.32, 0.28, -0.8 + (sy * 0.5), sy + 0.18, -11.4, MAT.linenTaupe);
+        addBox(0.38, 0.28, 0.26, 1.4 - (sy * 0.4), sy + 0.16, -11.4, MAT.leatherCognac);
+      }
+
+      // Cantilevered Study Desk & Task Chair
+      addBox(1.95, 0.08, 0.85, 0.8, 0.76, -8.6, MAT.walnut);
+      addBox(0.45, 0.74, 0.78, -0.05, 0.37, -8.6, MAT.charcoalStone);
+      addDropShadow(2.3, 1.2, 0.8, -8.6, 0.48);
+      // Desk Lamp & Chair
+      addCyl(0.14, 0.18, 0.42, 1.45, 0.98, -8.6, MAT.brass);
+      addBox(0.55, 0.85, 0.55, 0.8, 0.45, -9.4, MAT.leatherCognac);
+      addArchitecturalPlant(3.4, -10.5, 1.0);
+
+      // -----------------------------------------------------------------------
+      // ROOM 05: PRIMARY SUITE SANCTUARY
+      // -----------------------------------------------------------------------
+      // Plush Area Rug under King Bed
+      addBox(4.6, 0.03, 4.4, 9.2, 0.03, -8.2, MAT.rug);
+      // Fluted Walnut Acoustic Headboard Wall
+      addBox(4.8, 2.9, 0.18, 9.2, 1.45, -11.6, MAT.walnut);
+      // King Platform Bed & Layered Linen Bedding
+      addBox(2.35, 0.32, 2.45, 9.2, 0.16, -9.9, MAT.walnut);
+      addBox(2.15, 0.28, 2.25, 9.2, 0.42, -9.9, MAT.boucleCream);
+      addBox(2.18, 0.16, 1.35, 9.2, 0.52, -9.45, MAT.linenTaupe); // Duvet throw
+      // 4 Pillows
+      addBox(0.75, 0.22, 0.42, 8.65, 0.64, -10.75, MAT.boucleCream);
+      addBox(0.75, 0.22, 0.42, 9.75, 0.64, -10.75, MAT.boucleCream);
+      // Upholstered Bench at foot of bed
+      addBox(1.85, 0.42, 0.52, 9.2, 0.22, -8.2, MAT.leatherCognac);
+      addDropShadow(2.8, 3.6, 9.2, -9.5, 0.55);
+
+      // Floating Nightstands & Alabaster Globe Lamps
+      [7.55, 10.85].forEach((nx) => {
+        addBox(0.62, 0.22, 0.48, nx, 0.48, -11.1, MAT.walnut);
+        const lamp = new THREE.Mesh(sharedSphereGeo, MAT.glowBulb);
+        lamp.scale.set(0.14, 0.14, 0.14);
+        lamp.position.set(nx, 0.74, -11.1);
+        scene.add(lamp);
+      });
+
+      // Smoked Glass Wardrobe Vitrine along East Wall
+      addBox(0.75, 3.1, 4.4, 13.0, 1.55, -6.8, MAT.charcoalStone);
+      addBox(0.78, 2.9, 4.2, 12.95, 1.55, -6.8, MAT.glass);
+
+      // -----------------------------------------------------------------------
+      // ROOM 06: SPA WET-ROOM & FREESTANDING BATH
+      // -----------------------------------------------------------------------
+      // Raised Teak Slatted Deck under Tub
+      addBox(3.4, 0.08, 2.6, 9.8, 0.04, 4.2, MAT.walnut);
+      // Sculptural Oval Stone Soaking Tub
+      const tubOuter = addCyl(0.95, 0.78, 0.68, 9.8, 0.42, 4.2, MAT.plasterWarm);
+      tubOuter.scale.z = 0.62; // Elongated oval proportion
+      const tubWater = addCyl(0.86, 0.72, 0.52, 9.8, 0.48, 4.2, MAT.poolWater);
+      tubWater.scale.z = 0.56;
+      addDropShadow(2.4, 1.8, 9.8, 4.2, 0.5);
+      // Floor-Mounted Brushed Brass Tub Filler
+      addCyl(0.03, 0.03, 0.95, 10.95, 0.48, 4.2, MAT.brass);
+
+      // Dual Floating Stone Vanity & Halo Backlit Mirrors (East Wall)
+      addBox(0.65, 0.38, 2.4, 13.0, 0.82, 1.8, MAT.flutedStone);
+      addCyl(0.24, 0.2, 0.14, 13.0, 1.08, 1.25, MAT.marble);
+      addCyl(0.24, 0.2, 0.14, 13.0, 1.08, 2.35, MAT.marble);
+      [1.25, 2.35].forEach((mz) => {
+        const mGlow = addCyl(0.46, 0.46, 0.03, 13.38, 1.85, mz, MAT.glowBulb);
+        mGlow.rotation.z = Math.PI / 2;
+        const mGlass = addCyl(0.42, 0.42, 0.05, 13.36, 1.85, mz, MAT.mirror);
+        mGlass.rotation.z = Math.PI / 2;
+      });
+
+      // -----------------------------------------------------------------------
+      // ROOM 07: CENTRAL COURTYARD & INFINITY POOL DECK
+      // -----------------------------------------------------------------------
+      // Zero-Edge Infinity Pool Coping & Animated Water Plane
+      addBox(6.8, 0.24, 8.2, 0.0, 0.06, 0.8, MAT.charcoalStone);
+      window.poolWaterMesh = addBox(6.2, 0.18, 7.6, 0.0, 0.12, 0.8, MAT.poolWater);
+
+      // Two Architectural Teak Sun Loungers along Pool Deck
+      [-1.2, 1.2].forEach((lz) => {
+        addBox(0.85, 0.24, 1.95, -4.1, 0.14, lz, MAT.walnut);
+        addBox(0.78, 0.10, 1.85, -4.1, 0.28, lz, MAT.boucleCream);
+        addDropShadow(1.1, 2.2, -4.1, lz, 0.45);
+      });
+
+      // Courtyard Olive Trees in Architectural Planters
+      addArchitecturalPlant(4.1, -1.8, 1.35);
+      addArchitecturalPlant(-4.1, -2.5, 1.25);
+    }
+
+    buildVillaModel();
+
+        // =========================================================================
+    // 5B. ARCHITECTURAL COLLISION OBSTACLES & ROOM BOUNDS (GAME EXPLORER)
+    // =========================================================================
+    const OBSTACLES = [
+      // Deep Saltwater Pool Water Basin (Prevent falling into deep pool water while allowing walking on sun deck)
+      { minX: -3.3, maxX: 3.3, minZ: -3.4, maxZ: 4.4, name: 'Pool Basin' },
+      // Fluted Limestone Fireplace & Raised Stone Hearth Block
+      { minX: -13.6, maxX: -12.1, minZ: 0.8, maxZ: 3.6, name: 'Limestone Hearth' },
+      // Monolithic Calacatta Waterfall Kitchen Island
+      { minX: -11.4, maxX: -7.8, minZ: -9.5, maxZ: -8.1, name: 'Kitchen Island' },
+      // Solid Oak Dining Table & Chairs
+      { minX: -6.3, maxX: -4.7, minZ: -8.3, maxZ: -5.3, name: 'Dining Table' },
+      // Backlit Library Bookshelf Wall
+      { minX: -2.0, maxX: 3.6, minZ: -12.0, maxZ: -11.1, name: 'Library Shelving' },
+      // King Platform Bed & Bench
+      { minX: 7.8, maxX: 10.6, minZ: -11.4, maxZ: -7.6, name: 'Platform Bed' },
+      // Oval Stone Soaking Tub
+      { minX: 8.6, maxX: 11.0, minZ: 3.0, maxZ: 5.4, name: 'Soaking Tub' },
+      // Architectural Portal Divider Walls
+      { minX: -13.6, maxX: -9.9, minZ: -3.0, maxZ: -2.6, name: 'Kitchen Divider Wall' },
+      { minX: -4.0, maxX: -3.6, minZ: -12.0, maxZ: -7.6, name: 'Study West Wall' },
+      { minX: 4.4, maxX: 4.8, minZ: -12.0, maxZ: -7.6, name: 'Study East Wall' },
+      { minX: 9.6, maxX: 13.6, minZ: -2.4, maxZ: -2.0, name: 'Suite South Wall' },
+      { minX: -3.8, maxX: -3.4, minZ: 5.8, maxZ: 10.2, name: 'Foyer West Wall' },
+      { minX: 3.4, maxX: 3.8, minZ: 5.8, maxZ: 10.2, name: 'Foyer East Wall' }
+    ];
+
+    // Room Bounding Boxes for dynamic sensing while walking in Explore Mode
+    const ROOM_BOUNDS = [
+      { index: 0, minX: -3.6, maxX: 3.6, minZ: 5.8, maxZ: 11.4 },   // 01 Foyer
+      { index: 1, minX: -13.5, maxX: -4.4, minZ: -2.6, maxZ: 9.6 },  // 02 Living
+      { index: 2, minX: -13.5, maxX: -3.6, minZ: -12.0, maxZ: -2.6 }, // 03 Kitchen
+      { index: 3, minX: -3.6, maxX: 4.6, minZ: -12.0, maxZ: -4.4 },  // 04 Study
+      { index: 4, minX: 4.6, maxX: 13.5, minZ: -12.0, maxZ: -2.2 },   // 05 Suite
+      { index: 5, minX: 4.8, maxX: 13.5, minZ: -2.2, maxZ: 7.4 },    // 06 Bath
+      { index: 6, minX: -5.0, maxX: 5.0, minZ: -4.4, maxZ: 5.8 }     // 07 Courtyard
+    ];
+
+    // Synthesized Web Audio API Sound Effects (Footsteps & Chimes)
+    let audioCtx = null;
+    function initAudioContext() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtx = new AudioContextClass();
+        }
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playFootstepAudio() {
+      if (!state.soundEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        // Random subtle pitch variance for organic footstep sound
+        osc.frequency.setValueAtTime(70 + Math.random() * 25, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.09);
+      } catch (_) {}
+    }
+
+    function playInspectChime() {
+      if (!state.soundEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.18); // A5
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.36);
+      } catch (_) {}
+    }
+
+    // =========================================================================
+    // 6. BUILD 3D HOTSPOT DOM ELEMENTS & FLOORPLAN WAYPOINTS
+    // =========================================================================
+    const hotspotsLayer = document.getElementById('hotspots-layer');
+    const hotspotElements = new Map();
+
+    ALL_HOTSPOTS.forEach((hs) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hotspot-marker hotspot-pulse group flex items-center gap-1.5 px-2.5 py-1 rounded-full arch-glass border border-amber-300/40 hover:border-amber-300 text-left shadow-lg';
+      btn.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-amber-300 shrink-0"></span>
+        <span class="text-[11px] font-medium text-amber-100 whitespace-nowrap">${hs.title}</span>
+      `;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        focusOnHotspot(hs);
+      });
+      hotspotsLayer.appendChild(btn);
+      hotspotElements.set(hs.id, { el: btn, data: hs, worldVec: new THREE.Vector3(hs.pos.x, hs.pos.y, hs.pos.z) });
+    });
+
+    // Build Floorplan SVG Path & Waypoints
+    function initFloorplanSvg() {
+      const pathEl = document.getElementById('fp-spline-path');
+      const waypointsGroup = document.getElementById('fp-waypoints');
+      let d = '';
+      for (let i = 0; i <= 60; i++) {
+        const pt = cameraCurve.getPoint(i / 60);
+        d += (i === 0 ? 'M ' : ' L ') + `${pt.x.toFixed(2)} ${pt.z.toFixed(2)}`;
+      }
+      pathEl.setAttribute('d', d);
+
+      ROOMS.forEach((r) => {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('transform', `translate(${r.camPos.x}, ${r.camPos.z})`);
+        g.setAttribute('class', 'cursor-pointer');
+        g.innerHTML = `
+          <circle r="0.9" fill="rgba(17,19,24,0.9)" stroke="#e2b887" stroke-width="0.28" />
+          <text y="0.32" text-anchor="middle" fill="#fcd34d" font-size="0.85" font-family="monospace">${r.code}</text>
+        `;
+        g.addEventListener('click', (e) => {
+          e.stopPropagation();
+          jumpToRoom(r.index);
+        });
+        waypointsGroup.appendChild(g);
+      });
+
+      document.querySelectorAll('.fp-room').forEach((rect) => {
+        rect.addEventListener('click', () => {
+          const idx = parseInt(rect.getAttribute('data-room'), 10);
+          if (!isNaN(idx)) jumpToRoom(idx);
+        });
+      });
+    }
+    initFloorplanSvg();
+
+    // Build Bottom Room Tabs Bar
+    const roomTabsBar = document.getElementById('room-tabs-bar');
+    ROOMS.forEach((room) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.roomIndex = room.index;
+      btn.className = 'room-tab-btn px-3 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap flex items-center gap-1.5';
+      btn.innerHTML = `
+        <span class="font-mono text-[10px] opacity-70">${room.code}</span>
+        <span>${room.name.split(' ')[0]} ${room.name.split(' ')[1] || ''}</span>
+      `;
+      btn.addEventListener('click', () => jumpToRoom(room.index));
+      roomTabsBar.appendChild(btn);
+    });
+
+    // =========================================================================
+    // 7. UI SYNCHRONIZATION & HOTSPOT FOCUS LOGIC
+    // =========================================================================
+    function updateRoomPanelUI(roomIndex) {
+      const room = ROOMS[roomIndex];
+      document.getElementById('hud-room-badge').textContent = `${room.code} / ${room.name}`;
+      document.getElementById('room-index-tag').textContent = `STOP ${room.code} / 07`;
+      document.getElementById('room-zone-tag').textContent = room.zone;
+      document.getElementById('room-title').textContent = room.name;
+      document.getElementById('room-description').textContent = room.description;
+      document.getElementById('room-stat-area').textContent = room.area;
+      document.getElementById('room-stat-material').textContent = room.material;
+      document.getElementById('room-stat-aspect').textContent = room.aspect;
+      document.getElementById('room-stat-climate').textContent = room.climate;
+
+      // Render Feature Pills
+      const listEl = document.getElementById('room-features-list');
+      listEl.innerHTML = '';
+      room.features.forEach((feat) => {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'px-2.5 py-1 rounded-lg bg-amber-300/10 hover:bg-amber-300/25 border border-amber-300/25 text-amber-100 text-[11px] transition flex items-center gap-1.5';
+        pill.innerHTML = `
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span>
+          <span>${feat.title}</span>
+        `;
+        pill.addEventListener('click', () => focusOnHotspot(feat));
+        listEl.appendChild(pill);
+      });
+
+      // Highlight active room tab & floorplan zone
+      document.querySelectorAll('.room-tab-btn').forEach((btn, idx) => {
+        if (idx === roomIndex) {
+          btn.className = 'room-tab-btn px-3 py-1.5 rounded-xl text-xs font-semibold transition whitespace-nowrap flex items-center gap-1.5 bg-amber-300 text-stone-950 shadow-sm';
+        } else {
+          btn.className = 'room-tab-btn px-3 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap flex items-center gap-1.5 bg-white/5 hover:bg-white/15 text-stone-300';
+        }
+      });
+
+      document.querySelectorAll('.fp-room').forEach((rect) => {
+        const rIdx = parseInt(rect.getAttribute('data-room'), 10);
+        if (rIdx === roomIndex) {
+          rect.setAttribute('fill', 'rgba(252, 211, 77, 0.25)');
+          rect.setAttribute('stroke', 'rgba(252, 211, 77, 0.85)');
+        } else {
+          rect.setAttribute('fill', 'rgba(255, 255, 255, 0.06)');
+          rect.setAttribute('stroke', 'rgba(255, 255, 255, 0.28)');
+        }
+      });
+    }
+
+    function jumpToRoom(roomIndex) {
+      const clampedIdx = Math.max(0, Math.min(ROOMS.length - 1, roomIndex));
+      state.targetProgress = ROOMS[clampedIdx].progress;
+      state.autoWalk = false;
+      updateAutoWalkUI();
+      state.targetYaw = 0;
+      state.targetPitch = 0;
+      if (state.mode === 'explore') {
+        state.playerPos.set(ROOMS[clampedIdx].camPos.x, 1.72, ROOMS[clampedIdx].camPos.z);
+        state.playerVelocity.set(0, 0, 0);
+        state.verticalVelocity = 0;
+        playInspectChime();
+      }
+      hideInteractionHint();
+    }
+
+    // Rotate 360° camera perspective to look directly at a 3D feature hotspot
+    function focusOnHotspot(hs) {
+      state.autoOrbit = false;
+      updateAutoOrbitUI();
+
+      // Compute current base look direction along the spline
+      const camPos = cameraCurve.getPointAt(state.currentProgress);
+      const baseLook = lookAtCurve.getPointAt(state.currentProgress);
+      const baseDir = new THREE.Vector3().subVectors(baseLook, camPos).normalize();
+      const baseYaw = Math.atan2(baseDir.x, baseDir.z);
+      const basePitch = Math.asin(Math.max(-0.99, Math.min(0.99, baseDir.y)));
+
+      // Compute desired direction toward the hotspot
+      const hsVec = new THREE.Vector3(hs.pos.x, hs.pos.y, hs.pos.z);
+      const desiredDir = new THREE.Vector3().subVectors(hsVec, camPos).normalize();
+      const desiredYaw = Math.atan2(desiredDir.x, desiredDir.z);
+      const desiredPitch = Math.asin(Math.max(-0.99, Math.min(0.99, desiredDir.y)));
+
+      // Shortest angular difference so the camera turns smoothly
+      let deltaYaw = desiredYaw - baseYaw;
+      while (deltaYaw > Math.PI) deltaYaw -= Math.PI * 2;
+      while (deltaYaw < -Math.PI) deltaYaw += Math.PI * 2;
+
+      state.targetYaw = deltaYaw;
+      state.targetPitch = Math.max(-1.0, Math.min(1.0, desiredPitch - basePitch));
+
+      // Populate and display Hotspot Detail Card
+      state.selectedHotspotId = hs.id;
+      document.getElementById('hotspot-tag').textContent = hs.tag;
+      document.getElementById('hotspot-title').textContent = hs.title;
+      document.getElementById('hotspot-desc').textContent = hs.desc;
+      document.getElementById('hotspot-spec').textContent = hs.spec;
+      document.getElementById('hotspot-dim').textContent = hs.dim;
+      document.getElementById('hotspot-detail-card').classList.remove('hidden');
+    }
+
+    function hideInteractionHint() {
+      if (!state.hasInteracted) {
+        state.hasInteracted = true;
+        const hint = document.getElementById('interaction-hint');
+        if (hint) hint.style.opacity = '0';
+      }
+    }
+
+    // =========================================================================
+    // 7B. GAME EXPLORATION MODE SWITCHER & AUDIO / TORCH CONTROLS
+    // =========================================================================
+    function setExplorationMode(mode) {
+      if (state.mode === mode) return;
+      initAudioContext();
+      state.mode = mode;
+
+      const btnTour = document.getElementById('btn-mode-tour');
+      const btnExplore = document.getElementById('btn-mode-explore');
+      const reticle = document.getElementById('game-reticle');
+      const controlsBar = document.getElementById('game-controls-bar');
+      const scrubberTrack = document.getElementById('tour-scrubber-track');
+      const pointerBanner = document.getElementById('pointer-lock-banner');
+      const touchHud = document.getElementById('touch-controls-hud');
+
+      if (mode === 'explore') {
+        // Transfer current camera position & orientation seamlessly to the player
+        state.playerPos.copy(camera.position);
+        state.playerPos.y = 1.72; // Snap to ergonomic walking eye-height
+        state.playerVelocity.set(0, 0, 0);
+        state.verticalVelocity = 0;
+        state.isGrounded = true;
+
+        // Derive current horizontal yaw and vertical pitch from camera orientation
+        camera.getWorldDirection(tempVec);
+        state.targetYaw = Math.atan2(-tempVec.x, -tempVec.z);
+        state.targetPitch = Math.asin(Math.max(-0.98, Math.min(0.98, tempVec.y)));
+        state.currentYaw = state.targetYaw;
+        state.currentPitch = state.targetPitch;
+
+        state.autoWalk = false;
+        state.autoOrbit = false;
+        updateAutoWalkUI();
+        updateAutoOrbitUI();
+
+        // UI Updates for Game Mode
+        btnTour.className = 'px-3 py-1 rounded-full text-xs font-medium transition text-stone-300 hover:text-white flex items-center gap-1.5';
+        btnExplore.className = 'px-3 py-1 rounded-full text-xs font-semibold transition bg-amber-300 text-stone-950 flex items-center gap-1.5 shadow-sm';
+        reticle.classList.remove('hidden');
+        reticle.classList.add('flex');
+        controlsBar.classList.remove('hidden');
+        controlsBar.classList.add('flex');
+        scrubberTrack.classList.add('hidden');
+        pointerBanner.classList.remove('hidden');
+        touchHud.classList.remove('hidden');
+        touchHud.classList.add('flex');
+
+        playInspectChime();
+        hideInteractionHint();
+      } else {
+        // Return to Cinematic Tour Mode
+        if (state.isPointerLocked) {
+          document.exitPointerLock();
+        }
+        btnTour.className = 'px-3 py-1 rounded-full text-xs font-semibold transition bg-amber-300 text-stone-950 flex items-center gap-1.5 shadow-sm';
+        btnExplore.className = 'px-3 py-1 rounded-full text-xs font-medium transition text-stone-300 hover:text-white flex items-center gap-1.5';
+        reticle.classList.add('hidden');
+        reticle.classList.remove('flex');
+        controlsBar.classList.add('hidden');
+        controlsBar.classList.remove('flex');
+        scrubberTrack.classList.remove('hidden');
+        pointerBanner.classList.add('hidden');
+        touchHud.classList.add('hidden');
+        touchHud.classList.remove('flex');
+
+        // Find nearest spline waypoint to player's position
+        let bestT = 0;
+        let bestDist = Infinity;
+        for (let t = 0; t <= 1.0; t += 0.02) {
+          const pt = cameraCurve.getPoint(t);
+          const d = pt.distanceTo(state.playerPos);
+          if (d < bestDist) {
+            bestDist = d;
+            bestT = t;
+          }
+        }
+        state.targetProgress = bestT;
+        state.targetYaw = 0;
+        state.targetPitch = 0;
+      }
+    }
+
+    document.getElementById('btn-mode-tour').addEventListener('click', () => setExplorationMode('tour'));
+    document.getElementById('btn-mode-explore').addEventListener('click', () => setExplorationMode('explore'));
+    document.getElementById('btn-return-tour').addEventListener('click', () => setExplorationMode('tour'));
+
+    // Torch / Flashlight Toggle (F)
+    function toggleFlashlight() {
+      state.flashlightOn = !state.flashlightOn;
+      flashlight.intensity = state.flashlightOn ? 2.8 : 0;
+      const btn = document.getElementById('btn-flashlight');
+      const label = document.getElementById('label-flashlight');
+      if (state.flashlightOn) {
+        btn.classList.add('bg-amber-300/25', 'text-amber-200');
+        label.textContent = 'Torch [ON]';
+      } else {
+        btn.classList.remove('bg-amber-300/25', 'text-amber-200');
+        label.textContent = 'Torch [F]';
+      }
+      playInspectChime();
+    }
+    document.getElementById('btn-flashlight').addEventListener('click', toggleFlashlight);
+
+    // Sound FX Mute Toggle
+    document.getElementById('btn-sound-toggle').addEventListener('click', () => {
+      initAudioContext();
+      state.soundEnabled = !state.soundEnabled;
+      document.getElementById('icon-sound-on').classList.toggle('hidden', !state.soundEnabled);
+      document.getElementById('icon-sound-off').classList.toggle('hidden', state.soundEnabled);
+      if (state.soundEnabled) playInspectChime();
+    });
+
+    // Pointer Lock Mechanism for Game FPS Mouse Look
+    container.addEventListener('click', () => {
+      initAudioContext();
+      if (state.mode === 'explore' && !state.isPointerLocked) {
+        try {
+          container.requestPointerLock();
+        } catch (_) {}
+      }
+    });
+
+    document.getElementById('btn-lock-pointer').addEventListener('click', () => {
+      initAudioContext();
+      try {
+        container.requestPointerLock();
+      } catch (_) {}
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      state.isPointerLocked = (document.pointerLockElement === container);
+      const banner = document.getElementById('pointer-lock-banner');
+      if (state.mode === 'explore') {
+        if (state.isPointerLocked) {
+          banner.classList.add('hidden');
+        } else {
+          banner.classList.remove('hidden');
+        }
+      }
+    });
+
+    // Mouse Move for Direction Control
+    document.addEventListener('mousemove', (e) => {
+      if (state.mode !== 'explore') return;
+      if (state.isPointerLocked || state.isDragging) {
+        // Mouse controls viewing direction with smooth angular scaling
+        const sens = 0.0022;
+        state.targetYaw -= e.movementX * sens;
+        state.targetPitch = Math.max(-1.25, Math.min(1.25, state.targetPitch - e.movementY * sens));
+      }
+    });
+
+    // =========================================================================
+    // 8. SCROLL-JACKING & 360° PERSPECTIVE DRAG SCRUBBING LISTENERS
+    // =========================================================================
+    // A. Scroll-Jacking Wheel Handler (In Tour Mode) & Speed / FOV Zoom (In Explore Mode)
+    window.addEventListener('wheel', (e) => {
+      if (e.target.closest('#room-details-body') || e.target.closest('#guide-modal')) {
+        return;
+      }
+      e.preventDefault();
+      hideInteractionHint();
+
+      if (state.mode === 'tour') {
+        state.autoWalk = false;
+        updateAutoWalkUI();
+        const delta = e.deltaY * 0.00048;
+        state.targetProgress = Math.max(0.0, Math.min(1.0, state.targetProgress + delta));
+      } else {
+        // In Explore Mode, wheel adjusts camera lens FOV smoothly
+        const deltaFov = e.deltaY * 0.025;
+        state.targetFov = Math.max(45, Math.min(80, state.targetFov + deltaFov));
+        document.getElementById('label-fov-mm').textContent = `${Math.round(state.targetFov)}° Lens`;
+      }
+    }, { passive: false });
+
+    // B. 360° Drag Perspective Scrubbing (Mouse + Touch Pointer Events)
+    container.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      state.isDragging = true;
+      state.dragStartX = e.clientX;
+      state.dragStartY = e.clientY;
+      state.yawOnDragStart = state.targetYaw;
+      state.pitchOnDragStart = state.targetPitch;
+      state.pointerMovedDistance = 0;
+      state.autoOrbit = false;
+      updateAutoOrbitUI();
+      container.classList.add('dragging');
+      container.setPointerCapture(e.pointerId);
+      hideInteractionHint();
+    });
+
+    container.addEventListener('pointermove', (e) => {
+      if (!state.isDragging) return;
+      const dx = e.clientX - state.dragStartX;
+      const dy = e.clientY - state.dragStartY;
+      state.pointerMovedDistance = Math.hypot(dx, dy);
+
+      // Scrubbing horizontally rotates a full 360° panoramic view
+      const sensitivity = 0.0055;
+      state.targetYaw = state.yawOnDragStart - dx * sensitivity;
+      state.targetPitch = Math.max(-1.1, Math.min(1.1, state.pitchOnDragStart - dy * sensitivity * 0.85));
+    });
+
+    function endPointerDrag(e) {
+      if (!state.isDragging) return;
+      state.isDragging = false;
+      container.classList.remove('dragging');
+      try {
+        container.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+    container.addEventListener('pointerup', endPointerDrag);
+    container.addEventListener('pointercancel', endPointerDrag);
+
+    // C. Keyboard Navigation: WASD Forward/Backward/Strafe, Shift Sprint, Space Jump, Arrows
+    window.addEventListener('keydown', (e) => {
+      initAudioContext();
+      const code = e.code;
+
+      if (state.mode === 'explore') {
+        // Forward motion
+        if (code === 'KeyW' || code === 'ArrowUp') {
+          state.keys.forward = true;
+          e.preventDefault();
+        }
+        // Backward motion
+        if (code === 'KeyS' || code === 'ArrowDown') {
+          state.keys.backward = true;
+          e.preventDefault();
+        }
+        // Strafe Left
+        if (code === 'KeyA' || code === 'ArrowLeft') {
+          state.keys.left = true;
+          e.preventDefault();
+        }
+        // Strafe Right
+        if (code === 'KeyD' || code === 'ArrowRight') {
+          state.keys.right = true;
+          e.preventDefault();
+        }
+        // Sprint
+        if (code === 'ShiftLeft' || code === 'ShiftRight') {
+          state.keys.sprint = true;
+        }
+        // Jump
+        if (code === 'Space') {
+          e.preventDefault();
+          if (state.isGrounded) {
+            state.verticalVelocity = 5.6;
+            state.isGrounded = false;
+            playFootstepAudio();
+          }
+        }
+        // Flashlight Torch
+        if (code === 'KeyF') {
+          toggleFlashlight();
+        }
+        // Crouch toggle
+        if (code === 'KeyC') {
+          state.isCrouched = !state.isCrouched;
+        }
+        // Interact [E]
+        if (code === 'KeyE') {
+          if (state.interactTarget) {
+            focusOnHotspot(state.interactTarget);
+            playInspectChime();
+          }
+        }
+        hideInteractionHint();
+      } else {
+        // In Tour Mode
+        if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+          e.preventDefault();
+          state.targetProgress = Math.min(1.0, state.targetProgress + 0.05);
+          hideInteractionHint();
+        } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault();
+          state.targetProgress = Math.max(0.0, state.targetProgress - 0.05);
+          hideInteractionHint();
+        } else if (e.key === 'ArrowLeft') {
+          state.targetYaw += 0.14;
+          hideInteractionHint();
+        } else if (e.key === 'ArrowRight') {
+          state.targetYaw -= 0.14;
+          hideInteractionHint();
+        }
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const code = e.code;
+      if (code === 'KeyW' || code === 'ArrowUp') state.keys.forward = false;
+      if (code === 'KeyS' || code === 'ArrowDown') state.keys.backward = false;
+      if (code === 'KeyA' || code === 'ArrowLeft') state.keys.left = false;
+      if (code === 'KeyD' || code === 'ArrowRight') state.keys.right = false;
+      if (code === 'ShiftLeft' || code === 'ShiftRight') state.keys.sprint = false;
+    });
+
+    // Touch D-Pad Listeners for Mobile / Tablet Users
+    function bindTouchButton(btnId, keyName) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      const start = (e) => { e.preventDefault(); initAudioContext(); state.keys[keyName] = true; };
+      const end = (e) => { e.preventDefault(); state.keys[keyName] = false; };
+      btn.addEventListener('pointerdown', start);
+      btn.addEventListener('pointerup', end);
+      btn.addEventListener('pointercancel', end);
+      btn.addEventListener('pointerleave', end);
+    }
+    bindTouchButton('btn-touch-fwd', 'forward');
+    bindTouchButton('btn-touch-back', 'backward');
+    bindTouchButton('btn-touch-left', 'left');
+    bindTouchButton('btn-touch-right', 'right');
+
+    const touchSprintBtn = document.getElementById('btn-touch-sprint');
+    touchSprintBtn.addEventListener('click', () => {
+      state.keys.sprint = !state.keys.sprint;
+      touchSprintBtn.classList.toggle('bg-amber-300', state.keys.sprint);
+      touchSprintBtn.classList.toggle('text-stone-950', state.keys.sprint);
+    });
+
+    document.getElementById('btn-touch-jump').addEventListener('click', () => {
+      if (state.isGrounded) {
+        state.verticalVelocity = 5.6;
+        state.isGrounded = false;
+        playFootstepAudio();
+      }
+    });
+
+    // =========================================================================
+    // 9. UI CONTROLS & EVENT BINDINGS
+    // =========================================================================
+    const walkthroughScrubber = document.getElementById('walkthrough-scrubber');
+    walkthroughScrubber.addEventListener('input', (e) => {
+      state.targetProgress = parseFloat(e.target.value) / 1000;
+      state.autoWalk = false;
+      updateAutoWalkUI();
+      hideInteractionHint();
+    });
+
+    document.getElementById('btn-prev-room').addEventListener('click', () => {
+      jumpToRoom(state.activeRoomIndex - 1);
+    });
+
+    document.getElementById('btn-next-room').addEventListener('click', () => {
+      jumpToRoom(state.activeRoomIndex + 1);
+    });
+
+    document.getElementById('btn-reset-angle').addEventListener('click', () => {
+      state.targetYaw = 0;
+      state.targetPitch = 0;
+      state.autoOrbit = false;
+      updateAutoOrbitUI();
+    });
+
+    function updateAutoOrbitUI() {
+      const dot = document.getElementById('orbit-dot');
+      const btn = document.getElementById('btn-auto-orbit');
+      if (state.autoOrbit) {
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse';
+        btn.classList.add('text-amber-200', 'bg-amber-300/20');
+      } else {
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-stone-500';
+        btn.classList.remove('text-amber-200', 'bg-amber-300/20');
+      }
+    }
+
+    document.getElementById('btn-auto-orbit').addEventListener('click', () => {
+      state.autoOrbit = !state.autoOrbit;
+      updateAutoOrbitUI();
+    });
+
+    function updateAutoWalkUI() {
+      const ind = document.getElementById('auto-walk-indicator');
+      const txt = document.getElementById('auto-walk-text');
+      if (state.autoWalk) {
+        ind.className = 'w-2 h-2 rounded-full bg-amber-300 animate-ping';
+        txt.textContent = 'Pause Tour';
+      } else {
+        ind.className = 'w-2 h-2 rounded-full bg-stone-500';
+        txt.textContent = 'Auto Tour';
+      }
+    }
+
+    document.getElementById('btn-auto-walk').addEventListener('click', () => {
+      state.autoWalk = !state.autoWalk;
+      if (state.autoWalk && state.targetProgress >= 0.99) {
+        state.targetProgress = 0.0;
+      }
+      updateAutoWalkUI();
+    });
+
+    // 360° Yaw Slider & FOV Lens Slider
+    const sliderYaw = document.getElementById('slider-yaw');
+    sliderYaw.addEventListener('input', (e) => {
+      const deg = parseFloat(e.target.value);
+      state.targetYaw = THREE.MathUtils.degToRad(-deg);
+      state.autoOrbit = false;
+      updateAutoOrbitUI();
+    });
+
+    const sliderFov = document.getElementById('slider-fov');
+    sliderFov.addEventListener('input', (e) => {
+      state.targetFov = parseFloat(e.target.value);
+      document.getElementById('label-fov-mm').textContent = `${Math.round(state.targetFov)}° Lens`;
+    });
+
+    // Lighting Mode Buttons (Daylight / Golden Hour / Architectural Night)
+    document.querySelectorAll('.lighting-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-lighting');
+        state.lightingMode = mode;
+        document.querySelectorAll('.lighting-btn').forEach((b) => {
+          if (b.getAttribute('data-lighting') === mode) {
+            b.className = 'lighting-btn px-2.5 py-1 rounded-full text-[11px] font-medium transition bg-amber-300/20 text-amber-200';
+          } else {
+            b.className = 'lighting-btn px-2.5 py-1 rounded-full text-[11px] font-medium transition text-stone-400 hover:text-stone-200';
+          }
+        });
+        applyLightingPreset(mode);
+      });
+    });
+
+    function applyLightingPreset(mode) {
+      if (mode === 'day') {
+        scene.background.setHex(0xdbe4eb);
+        scene.fog.color.setHex(0xdbe4eb);
+        hemiLight.color.setHex(0xfffcf5);
+        hemiLight.groundColor.setHex(0x6e655f);
+        hemiLight.intensity = 0.85;
+        sunLight.color.setHex(0xfff4e0);
+        sunLight.intensity = 1.15;
+        sunLight.position.set(18, 28, 16);
+        interiorLights.forEach((item) => { item.light.intensity = item.baseIntensity * 0.7; });
+      } else if (mode === 'sunset') {
+        scene.background.setHex(0xd99b78);
+        scene.fog.color.setHex(0xd99b78);
+        hemiLight.color.setHex(0xffcca8);
+        hemiLight.groundColor.setHex(0x4a352c);
+        hemiLight.intensity = 0.65;
+        sunLight.color.setHex(0xff8c42);
+        sunLight.intensity = 1.35;
+        sunLight.position.set(-24, 9, 14);
+        interiorLights.forEach((item) => { item.light.intensity = item.baseIntensity * 1.25; });
+      } else if (mode === 'night') {
+        scene.background.setHex(0x0c121e);
+        scene.fog.color.setHex(0x0c121e);
+        hemiLight.color.setHex(0x28385e);
+        hemiLight.groundColor.setHex(0x11131a);
+        hemiLight.intensity = 0.32;
+        sunLight.color.setHex(0x6488ea);
+        sunLight.intensity = 0.25;
+        sunLight.position.set(10, 22, -15);
+        interiorLights.forEach((item) => { item.light.intensity = item.baseIntensity * 1.85; });
+      }
+    }
+
+    // Performance / DPI Mode Toggle
+    document.getElementById('btn-perf-mode').addEventListener('click', () => {
+      state.highDpiMode = !state.highDpiMode;
+      const ratio = state.highDpiMode ? Math.min(window.devicePixelRatio, 2.0) : 1.0;
+      renderer.setPixelRatio(ratio);
+      document.getElementById('perf-label').textContent = state.highDpiMode ? '· High-DPI' : '· Eco Smooth';
+    });
+
+    // Collapse / Expand Room Details Panel
+    document.getElementById('btn-toggle-details').addEventListener('click', () => {
+      state.detailsExpanded = !state.detailsExpanded;
+      const body = document.getElementById('room-details-body');
+      const icon = document.getElementById('icon-collapse-details');
+      if (state.detailsExpanded) {
+        body.classList.remove('hidden');
+        icon.style.transform = 'rotate(0deg)';
+      } else {
+        body.classList.add('hidden');
+        icon.style.transform = 'rotate(180deg)';
+      }
+    });
+
+    // Toggle Floorplan Minimap
+    document.getElementById('btn-toggle-minimap').addEventListener('click', (e) => {
+      state.minimapVisible = !state.minimapVisible;
+      const body = document.getElementById('minimap-body');
+      body.classList.toggle('hidden', !state.minimapVisible);
+      e.target.textContent = state.minimapVisible ? 'Hide' : 'Show';
+    });
+
+    // Close Hotspot Card
+    document.getElementById('btn-close-hotspot').addEventListener('click', () => {
+      document.getElementById('hotspot-detail-card').classList.add('hidden');
+      state.selectedHotspotId = null;
+    });
+
+    // Guide Modal Controls
+    const guideModal = document.getElementById('guide-modal');
+    document.getElementById('btn-open-guide').addEventListener('click', () => {
+      guideModal.classList.remove('hidden');
+      guideModal.classList.add('flex');
+    });
+    function closeGuideModal() {
+      guideModal.classList.add('hidden');
+      guideModal.classList.remove('flex');
+    }
+    document.getElementById('btn-close-guide').addEventListener('click', closeGuideModal);
+    document.getElementById('btn-dismiss-guide').addEventListener('click', closeGuideModal);
+
+    // Resize Handler
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // =========================================================================
+    // 10. MAIN RENDER LOOP (SMOOTH DAMPING, 360° QUATERNION LOOK & HUD PROJECTION)
+    // =========================================================================
+    updateRoomPanelUI(0);
+
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let fpsAccumulator = 0;
+    const tempVec = new THREE.Vector3();
+    const camForward = new THREE.Vector3();
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+
+      // FPS Telemetry
+      frameCount++;
+      fpsAccumulator += dt;
+      if (fpsAccumulator >= 0.5) {
+        const fps = Math.min(60, Math.round(frameCount / fpsAccumulator));
+        document.getElementById('fps-counter').textContent = `${fps} FPS`;
+        frameCount = 0;
+        fpsAccumulator = 0;
+      }
+
+      // Smooth Lens FOV
+      state.currentFov += (state.targetFov - state.currentFov) * (1 - Math.exp(-8.5 * dt));
+      if (Math.abs(camera.fov - state.currentFov) > 0.05) {
+        camera.fov = state.currentFov;
+        camera.updateProjectionMatrix();
+      }
+
+      // Subtle Animated Pool Water Shimmer
+      if (window.poolWaterMesh) {
+        texPool.offset.x = (now * 0.00008) % 1;
+        texPool.offset.y = (now * 0.00006) % 1;
+      }
+
+      let currentCamPos = camera.position;
+      let finalYaw = 0;
+
+      // =======================================================================
+      // MODE A: GAME EXPLORER (FIRST-PERSON WASD MOTION & MOUSE DIRECTION)
+      // =======================================================================
+      if (state.mode === 'explore') {
+        // 1. Calculate Horizontal Movement Vector along Player Yaw
+        const forwardDir = new THREE.Vector3(-Math.sin(state.targetYaw), 0, -Math.cos(state.targetYaw)).normalize();
+        const rightDir = new THREE.Vector3(-forwardDir.z, 0, forwardDir.x).normalize();
+        const moveInput = new THREE.Vector3(0, 0, 0);
+
+        if (state.keys.forward) moveInput.add(forwardDir);
+        if (state.keys.backward) moveInput.sub(forwardDir);
+        if (state.keys.right) moveInput.add(rightDir);
+        if (state.keys.left) moveInput.sub(rightDir);
+
+        const targetSpeed = state.keys.sprint ? 6.2 : (state.isCrouched ? 2.0 : 3.6);
+
+        if (moveInput.lengthSq() > 0) {
+          moveInput.normalize();
+          const targetVel = moveInput.multiplyScalar(targetSpeed);
+          state.playerVelocity.lerp(targetVel, 1 - Math.exp(-14.0 * dt));
+        } else {
+          state.playerVelocity.multiplyScalar(Math.exp(-15.0 * dt));
+        }
+
+        // 2. Resolve Collisions against Architectural Obstacles & Bounds
+        let nextX = state.playerPos.x + state.playerVelocity.x * dt;
+        let nextZ = state.playerPos.z + state.playerVelocity.z * dt;
+
+        // Perimeter Villa Boundary
+        nextX = Math.max(-12.8, Math.min(12.8, nextX));
+        nextZ = Math.max(-11.4, Math.min(10.8, nextZ));
+
+        // Obstacle AABB Collision Resolution (Sliding along walls)
+        const pRadius = 0.38;
+        OBSTACLES.forEach((obs) => {
+          if (nextX + pRadius > obs.minX && nextX - pRadius < obs.maxX &&
+              nextZ + pRadius > obs.minZ && nextZ - pRadius < obs.maxZ) {
+            // Determine shortest overlap axis
+            const overlapLeft = (nextX + pRadius) - obs.minX;
+            const overlapRight = obs.maxX - (nextX - pRadius);
+            const overlapTop = (nextZ + pRadius) - obs.minZ;
+            const overlapBottom = obs.maxZ - (nextZ - pRadius);
+            const minOverlapX = Math.min(overlapLeft, overlapRight);
+            const minOverlapZ = Math.min(overlapTop, overlapBottom);
+
+            if (minOverlapX < minOverlapZ) {
+              if (overlapLeft < overlapRight) {
+                nextX = obs.minX - pRadius;
+                state.playerVelocity.x = 0;
+              } else {
+                nextX = obs.maxX + pRadius;
+                state.playerVelocity.x = 0;
+              }
+            } else {
+              if (overlapTop < overlapBottom) {
+                nextZ = obs.minZ - pRadius;
+                state.playerVelocity.z = 0;
+              } else {
+                nextZ = obs.maxZ + pRadius;
+                state.playerVelocity.z = 0;
+              }
+            }
+          }
+        });
+
+        state.playerPos.x = nextX;
+        state.playerPos.z = nextZ;
+
+        // 3. Vertical Physics (Gravity & Jump)
+        const targetEyeY = state.isCrouched ? 1.15 : 1.72;
+        if (!state.isGrounded) {
+          state.verticalVelocity -= 22.0 * dt;
+          state.playerPos.y += state.verticalVelocity * dt;
+          if (state.playerPos.y <= targetEyeY) {
+            state.playerPos.y = targetEyeY;
+            state.verticalVelocity = 0;
+            state.isGrounded = true;
+            playFootstepAudio();
+          }
+        } else {
+          state.playerPos.y = targetEyeY;
+        }
+
+        // 4. Realistic Dynamic Head Bobbing & Footsteps
+        const horizSpeed = Math.hypot(state.playerVelocity.x, state.playerVelocity.z);
+        if (horizSpeed > 0.4 && state.isGrounded) {
+          const prevCycle = state.walkCycle;
+          state.walkCycle += horizSpeed * dt * 3.4;
+          state.headBobY = Math.sin(state.walkCycle) * (state.keys.sprint ? 0.046 : 0.030);
+
+          // Footstep audio trigger on cadence stride
+          if (Math.sin(prevCycle) >= 0 && Math.sin(state.walkCycle) < 0) {
+            playFootstepAudio();
+          }
+        } else {
+          state.headBobY *= 0.82;
+        }
+
+        // 5. Update Camera Rig
+        camera.position.set(state.playerPos.x, state.playerPos.y + state.headBobY, state.playerPos.z);
+        camera.rotation.set(state.targetPitch, state.targetYaw, 0, 'YXZ');
+        currentCamPos = camera.position;
+        finalYaw = state.targetYaw;
+
+        // 6. Dynamic Room Sensing in Explore Mode
+        ROOM_BOUNDS.forEach((rb) => {
+          if (state.playerPos.x >= rb.minX && state.playerPos.x <= rb.maxX &&
+              state.playerPos.z >= rb.minZ && state.playerPos.z <= rb.maxZ) {
+            if (rb.index !== state.activeRoomIndex) {
+              state.activeRoomIndex = rb.index;
+              updateRoomPanelUI(rb.index);
+            }
+          }
+        });
+
+        // 7. Dynamic Reticle Proximity & Hover Detection for Interactive Elements
+        camera.getWorldDirection(camForward);
+        let bestTarget = null;
+        let bestScore = -1;
+
+        ALL_HOTSPOTS.forEach((hs) => {
+          const hsVec = new THREE.Vector3(hs.pos.x, hs.pos.y, hs.pos.z);
+          const dist = currentCamPos.distanceTo(hsVec);
+          if (dist < 4.2) {
+            const toElem = tempVec.subVectors(hsVec, currentCamPos).normalize();
+            const dot = camForward.dot(toElem);
+            if (dot > 0.92 && dot > bestScore) {
+              bestScore = dot;
+              bestTarget = hs;
+            }
+          }
+        });
+
+        const promptEl = document.getElementById('interact-prompt');
+        const reticleRing = document.getElementById('reticle-ring');
+        if (bestTarget) {
+          state.interactTarget = bestTarget;
+          document.getElementById('interact-text').textContent = `Inspect ${bestTarget.title}`;
+          promptEl.classList.remove('hidden');
+          promptEl.classList.add('flex');
+          reticleRing.classList.remove('scale-75', 'opacity-40');
+          reticleRing.classList.add('scale-125', 'opacity-100', 'border-amber-300');
+        } else {
+          state.interactTarget = null;
+          promptEl.classList.add('hidden');
+          promptEl.classList.remove('flex');
+          reticleRing.classList.add('scale-75', 'opacity-40');
+          reticleRing.classList.remove('scale-125', 'opacity-100', 'border-amber-300');
+        }
+
+        // Update Speed Telemetry Badge
+        const speedText = state.keys.sprint ? 'Sprint · 6.2 m/s' : (state.isCrouched ? 'Crouch · 2.0 m/s' : 'Walk · 3.6 m/s');
+        document.getElementById('player-speed-badge').textContent = speedText;
+
+      } else {
+        // =====================================================================
+        // MODE B: CINEMATIC SPLINE TOUR MODE (SCROLL-JACKING & 360° DRAG)
+        // =====================================================================
+        if (state.autoWalk) {
+          state.targetProgress += dt * 0.032;
+          if (state.targetProgress >= 1.0) {
+            state.targetProgress = 1.0;
+            state.autoWalk = false;
+            updateAutoWalkUI();
+          }
+        }
+
+        if (state.autoOrbit && !state.isDragging) {
+          state.targetYaw -= dt * 0.42;
+        }
+
+        const damp = 1 - Math.exp(-8.5 * dt);
+        state.currentProgress += (state.targetProgress - state.currentProgress) * damp;
+        state.currentYaw += (state.targetYaw - state.currentYaw) * damp;
+        state.currentPitch += (state.targetPitch - state.currentPitch) * damp;
+
+        const clampedT = Math.max(0.0, Math.min(1.0, state.currentProgress));
+        const camPos = cameraCurve.getPointAt(clampedT);
+        const baseLook = lookAtCurve.getPointAt(clampedT);
+
+        camera.position.copy(camPos);
+        currentCamPos = camera.position;
+
+        const baseDir = tempVec.subVectors(baseLook, camPos).normalize();
+        const baseYaw = Math.atan2(baseDir.x, baseDir.z);
+        const basePitch = Math.asin(Math.max(-0.98, Math.min(0.98, baseDir.y)));
+
+        finalYaw = baseYaw + state.currentYaw;
+        const finalPitch = Math.max(-1.22, Math.min(1.22, basePitch + state.currentPitch));
+
+        const lookTarget = new THREE.Vector3(
+          camPos.x + Math.sin(finalYaw) * Math.cos(finalPitch) * 5.0,
+          camPos.y + Math.sin(finalPitch) * 5.0,
+          camPos.z + Math.cos(finalYaw) * Math.cos(finalPitch) * 5.0
+        );
+        camera.lookAt(lookTarget);
+
+        // Sync Tour UI
+        if (document.activeElement !== walkthroughScrubber) {
+          walkthroughScrubber.value = Math.round(clampedT * 1000);
+        }
+        document.getElementById('scroll-pct-readout').textContent = `${Math.round(clampedT * 100)}% Walked`;
+
+        let closestIdx = 0;
+        let minDiff = Infinity;
+        ROOMS.forEach((r, idx) => {
+          const diff = Math.abs(r.progress - clampedT);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closestIdx = idx;
+          }
+        });
+        if (closestIdx !== state.activeRoomIndex) {
+          state.activeRoomIndex = closestIdx;
+          updateRoomPanelUI(closestIdx);
+        }
+      }
+
+      // Convert finalYaw to 0-360 Compass Heading
+      let headingDeg = Math.round((THREE.MathUtils.radToDeg(-finalYaw) + 180) % 360);
+      if (headingDeg < 0) headingDeg += 360;
+      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const cardinal = dirs[Math.round(headingDeg / 45) % 8];
+      document.getElementById('compass-readout').textContent = `${String(headingDeg).padStart(3, '0')}° ${cardinal}`;
+
+      // Sync Yaw Slider in Room Card
+      let relDeg = Math.round(THREE.MathUtils.radToDeg(-state.targetYaw)) % 360;
+      if (relDeg > 180) relDeg -= 360;
+      if (relDeg < -180) relDeg += 360;
+      document.getElementById('label-yaw-deg').textContent = `${relDeg > 0 ? '+' : ''}${relDeg}°`;
+      if (document.activeElement !== sliderYaw) {
+        sliderYaw.value = relDeg;
+      }
+
+      // Update Floorplan Camera Rig & Rotating 360° View Cone
+      const fpRig = document.getElementById('fp-camera-rig');
+      if (fpRig) {
+        const svgRotDeg = THREE.MathUtils.radToDeg(-finalYaw) + 180;
+        fpRig.setAttribute('transform', `translate(${currentCamPos.x.toFixed(2)}, ${currentCamPos.z.toFixed(2)}) rotate(${svgRotDeg.toFixed(1)})`);
+      }
+
+      // Project 3D Hotspots to 2D Screen Space
+      camera.getWorldDirection(camForward);
+      const halfW = window.innerWidth * 0.5;
+      const halfH = window.innerHeight * 0.5;
+
+      hotspotElements.forEach(({ el, data, worldVec }) => {
+        const dist = currentCamPos.distanceTo(worldVec);
+        const toHotspot = tempVec.subVectors(worldVec, currentCamPos).normalize();
+        const dot = camForward.dot(toHotspot);
+
+        // Only show hotspots that are in front of the camera and within reasonable viewing distance
+        if (dot < 0.15 || dist > 11.5) {
+          el.classList.add('hidden-behind');
+          return;
+        }
+
+        const projected = worldVec.clone().project(camera);
+        const screenX = (projected.x * halfW) + halfW;
+        const screenY = -(projected.y * halfH) + halfH;
+
+        if (screenX < 20 || screenX > window.innerWidth - 20 || screenY < 40 || screenY > window.innerHeight - 60) {
+          el.classList.add('hidden-behind');
+          return;
+        }
+
+        el.classList.remove('hidden-behind');
+        el.style.left = `${screenX.toFixed(1)}px`;
+        el.style.top = `${screenY.toFixed(1)}px`;
+        el.style.opacity = dist < 7.5 ? '1' : '0.68';
+      });
+
+      renderer.render(scene, camera);
+    }
+window.onload = () => {
+      requestAnimationFrame(animate);
+    };
+  </script>
+</body>
+</html>
